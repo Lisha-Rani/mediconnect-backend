@@ -1,0 +1,16 @@
+=== CLINICAL TRIAGE GUIDELINES 2024 ===
+
+CONDITION: Sprained Ankle
+SYMPTOMS: Sharp pain in the lower leg or foot, swelling, bruising, inability to bear weight.
+RECOMMENDED ACTION: Apply ice, elevate the foot, and rest. Take over-the-counter anti-inflammatory medication.
+URGENCY: Low
+
+CONDITION: Appendicitis
+SYMPTOMS: Sharp pain in the lower right abdomen, gets worse when walking, nausea, mild fever.
+RECOMMENDED ACTION: Go to the emergency room immediately for a CT scan and possible surgery.
+URGENCY: High
+
+CONDITION: Myocardial Infarction (Heart Attack)
+SYMPTOMS: Heavy pressure in the center of the chest, pain radiating to the left jaw or arm, shortness of breath, sweating.
+RECOMMENDED ACTION: Call 911 immediately. Chew aspirin if available. Do not drive yourself.
+URGENCY: Critical
