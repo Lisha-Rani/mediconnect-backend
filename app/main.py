@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.api.endpoints import ai,auth
-
+from app.api.endpoints.ai import router as ai_router
 # Initialize the FastAPI app
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -36,3 +36,4 @@ async def health_check():
     return {"message": "MediAI Systems fully operational"}
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(ai.router, prefix="/api/v1/ai", tags=["AI & Voice Services"])
+app.include_router(ai_router, prefix="/api/v1")
