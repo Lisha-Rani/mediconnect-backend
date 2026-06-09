@@ -22,6 +22,7 @@ class DoctorCreate(BaseModel):
     specialization: str
     hospital_clinic: str
     city: str
+    consultation_fee: int
 
 class DoctorResponse(BaseModel):
     id: int
@@ -31,5 +32,6 @@ class DoctorResponse(BaseModel):
     specialization: str
     hospital_clinic: str
     city: str
+    consultation_fee: int
     class Config:
         from_attributes = True

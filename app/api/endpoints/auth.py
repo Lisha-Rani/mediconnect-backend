@@ -76,6 +76,7 @@ async def register_doctor(doctor_data: DoctorCreate, db: AsyncSession = Depends(
         specialization=doctor_data.specialization,
         hospital_clinic=doctor_data.hospital_clinic,
         city=doctor_data.city,  # 👈 Added here to save to database!
+        consultation_fee=doctor_data.consultation_fee,
         email=doctor_data.email,
         password_hash=hashed_password
     )

@@ -16,11 +16,15 @@ from app.db.session import get_db
 from app.db.models import Diagnosis, User, MedicalKnowledge, Doctor
 from app.api.dependencies import get_current_user
 
-router = APIRouter(prefix="/ai", tags=["AI Recommendation"])
+# Clean router configurations
+router = APIRouter(prefix="/ai", tags=["AI Medical Engine"])
 
 # --- PYDANTIC MODELS ---
-class SymptomRequest(BaseModel):
-    transcribed_text: str
+class TriageRequest(BaseModel):
+    text: str
+    latitude: float | None = None   # Sent if user clicks "Use Current Location" or drops a map pin
+    longitude: float | None = None  # Sent if user clicks "Use Current Location" or drops a map pin
+    explicit_city: str | None = None # Sent if user manually types/selects a city name from a search dropdown
 
 class SymptomAnalysis(BaseModel):
     primary_symptoms: list[str] = Field(description="List of main symptoms extracted")
@@ -41,7 +45,9 @@ class DoctorSchema(BaseModel):
     hospital_clinic: str
     city: str
     email: str
-
+    match_score: int  
+    match_reasons: list[str]  
+    consultation_fee: int
     class Config:
         from_attributes = True
 
@@ -54,9 +60,7 @@ class FinalTriageResponse(BaseModel):
 
 # --- UTILITY HELPERS ---
 
-# Auto-detect patient location from network IP address
 async def get_city_from_ip(ip_address: str) -> str:
-    # Localhost fallback for your local development terminal testing
     if ip_address in ("127.0.0.1", "::1"):
         return "Patna"
 
@@ -66,9 +70,23 @@ async def get_city_from_ip(ip_address: str) -> str:
             data = response.json()
             return data.get("city", "Patna")
         except Exception:
-            return "Patna" # Fallback safety default
+            return "Patna"
 
-# Native YouTube Extractor (Self-healing recursive parsing)
+async def get_city_from_coords(lat: float, lon: float) -> str | None:
+    """Converts GPS coordinates into a clean City Name using open-source OpenStreetMap"""
+    async with httpx.AsyncClient() as client:
+        try:
+            url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}"
+            headers = {"User-Agent": "MediAI-Healthcare-App"}
+            response = await client.get(url, headers=headers, timeout=3.0)
+            if response.status_code == 200:
+                address = response.json().get("address", {})
+                # Extract city metadata cleanly based on geography boundaries
+                return address.get("city") or address.get("town") or address.get("village")
+        except Exception as e:
+            print(f"Reverse geocoding failed: {e}")
+    return None
+
 async def fetch_youtube_remedies(search_term: str) -> list[dict]:
     query = search_term.replace(" ", "+")
     url = f"https://www.youtube.com/results?search_query={query}"
@@ -76,17 +94,14 @@ async def fetch_youtube_remedies(search_term: str) -> list[dict]:
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept-Language": "en-US,en;q=0.9"
     }
-    
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(url, headers=headers, timeout=5.0)
             if response.status_code != 200:
                 return []
-            
             match = re.search(r"ytInitialData\s*=\s*({.*?});", response.text)
             if not match:
                 return []
-                
             data = json.loads(match.group(1))
             video_list = []
             
@@ -114,28 +129,27 @@ async def fetch_youtube_remedies(search_term: str) -> list[dict]:
 
             find_videos_recursive(data)
             return video_list
-            
         except Exception as e:
             print(f"Native YouTube search skipped: {e}")
             return []
 
 
-# --- ENDPOINTS ---
-@router.post("/voice-symptom-check", response_model=FinalTriageResponse)
-async def analyze_voice_symptoms(
-    request: SymptomRequest,
-    fastapi_req: Request, # 👈 Added to capture the client's network IP address
+# --- THE UNIFIED ENDPOINT ---
+@router.post("/check", response_model=FinalTriageResponse)
+async def process_medical_triage(
+    payload: TriageRequest,
+    fastapi_req: Request,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     try:
-        # --- PHASE 3: THE RETRIEVER ---
+        # --- PHASE 1: THE RETRIEVER (RAG) ---
         embeddings = HuggingFaceEndpointEmbeddings(
             model="sentence-transformers/all-MiniLM-L6-v2",
             task="feature-extraction",
             huggingfacehub_api_token=settings.HUGGINGFACE_API_KEY 
         )
-        user_vector = await embeddings.aembed_query(request.transcribed_text)
+        user_vector = await embeddings.aembed_query(payload.text)
         
         result = await db.execute(
             select(MedicalKnowledge)
@@ -145,15 +159,14 @@ async def analyze_voice_symptoms(
         relevant_docs = result.scalars().all()
         context_text = "\n\n".join([doc.content for doc in relevant_docs])
 
-        # --- PHASE 4: THE PROMPT UPGRADE (Hybrid RAG) ---
+        # --- PHASE 2: THE AI TRIAGE ENGINE (Gemini) ---
         llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash", 
             temperature=0,
-            api_key=settings.GOOGLE_API_KEY
+            api_key=settings.GOOGLE_API_KEY  
         )
         
         parser = JsonOutputParser(pydantic_object=SymptomAnalysis)
-        
         prompt = ChatPromptTemplate.from_messages([
             ("system", "You are an expert AI medical triage assistant.\n\n"
                        "RULE 1: Always prioritize the provided MEDICAL GUIDELINES. If the patient's symptoms match the guidelines, follow them strictly for your diagnosis.\n"
@@ -163,67 +176,100 @@ async def analyze_voice_symptoms(
                        " - If SEVERE, strongly advise professional medical care and leave 'remedy_search_term' null.\n\n"
                        "MEDICAL GUIDELINES:\n{context}\n\n"
                        "Format Instructions:\n{format_instructions}"),
-            ("human", "Patient transcript: {transcript}")
+            ("human", "Patient query/transcript: {transcript}")
         ])
         
         chain = prompt | llm | parser
-        
         ai_diagnosis = await chain.ainvoke({
-            "transcript": request.transcribed_text,
+            "transcript": payload.text,
             "context": context_text,
             "format_instructions": parser.get_format_instructions()
         })
 
-        # --- PHASE 5: FETCH YOUTUBE VIDEOS NATIVELY ---
+        # --- PHASE 3: FETCH YOUTUBE VIDEOS NATIVELY ---
         video_list = []
         search_term = ai_diagnosis.get("remedy_search_term")
         if search_term:
-            print(f"Fetching videos natively for: {search_term}")
             video_list = await fetch_youtube_remedies(search_term)
 
-        # --- PHASE 6: LOCATION & SPECIALIZATION LOOKUP (Option 1) ---
-        # A. Resolve client location via IP
-        client_ip = fastapi_req.client.host
-        user_city = await get_city_from_ip(client_ip)
-        
-        # B. Query local medical practitioners matching the specialty and city
+        # --- PHASE 4: SMART DYNAMIC LOCATION RESOLUTION ---
+        user_city = None
+
+        # Priority 1: User explicitly searched/typed a city inside the map search bar
+        if payload.explicit_city:
+            user_city = payload.explicit_city
+
+        # Priority 2: User clicked "Use Current Location" or pinned a custom spot (GPS Coordinates provided)
+        elif payload.latitude is not None and payload.longitude is not None:
+            user_city = await get_city_from_coords(payload.latitude, payload.longitude)
+
+        # Priority 3: Ultimate System Fallback - Resolve via request network IP address
+        if not user_city:
+            client_ip = fastapi_req.client.host
+            user_city = await get_city_from_ip(client_ip)
+
         target_specialty = ai_diagnosis.get("recommended_specialization")
         
-        doc_query = select(Doctor).filter(
-            Doctor.specialization.ilike(f"%{target_specialty}%"),
-            Doctor.city.ilike(f"%{user_city}%")
-        )
+        # Query matching specialization globally
+        doc_query = select(Doctor).filter(Doctor.specialization.ilike(f"%{target_specialty}%"))
         doc_result = await db.execute(doc_query)
-        recommended_doctors = doc_result.scalars().all()
+        all_specialists = doc_result.scalars().all()
         
-        # C. Smart Fallback: If no doctors are nearby, search globally for that specialty
-        if not recommended_doctors:
-            fallback_query = select(Doctor).filter(Doctor.specialization.ilike(f"%{target_specialty}%"))
-            fallback_result = await db.execute(fallback_query)
-            recommended_doctors = fallback_result.scalars().all()
+        scored_doctors = []
+        for doc in all_specialists:
+            score = 0
+            reasons = []
+            
+            # Location Proximity Scoring
+            if doc.city and doc.city.lower().strip() == user_city.lower().strip():
+                score += 70
+                reasons.append(f"Located directly in your city ({user_city})")
+            else:
+                score += 20
+                reasons.append(f"Available for remote/tele-consultation from {doc.city or 'nearby'}")
+                
+            # Experience Metrics
+            has_experience_field = hasattr(doc, 'experience_years') and doc.experience_years is not None
+            if has_experience_field:
+                exp = doc.experience_years
+                if exp >= 10:
+                    score += 30
+                    reasons.append(f"Highly Experienced Specialist ({exp}+ years)")
+                elif exp >= 5:
+                    score += 20
+                    reasons.append(f"Established practitioner ({exp} years experience)")
+                else:
+                    score += 10
+            else:
+                score += 15
+            
+            scored_doctors.append({
+                "id": doc.id,
+                "first_name": doc.first_name,
+                "last_name": doc.last_name,
+                "specialization": doc.specialization,
+                "hospital_clinic": doc.hospital_clinic,
+                "city": doc.city or "Unknown",
+                "email": doc.email,
+                "match_score": min(score, 100),
+                "match_reasons": reasons,
+                "consultation_fee": doc.consultation_fee
+            })
+            
+        scored_doctors.sort(key=lambda x: x["match_score"], reverse=True)
 
-        # Combine payload matching the FinalTriageResponse blueprint
+        # Build dynamic transaction payload
         final_payload = FinalTriageResponse(
             analysis=ai_diagnosis,
             detected_city=user_city,
             recommended_videos=video_list,
-            recommended_doctors=[
-                DoctorSchema(
-                    id=doc.id,
-                    first_name=doc.first_name,
-                    last_name=doc.last_name,
-                    specialization=doc.specialization,
-                    hospital_clinic=doc.hospital_clinic,
-                    city=doc.city,
-                    email=doc.email
-                ) for doc in recommended_doctors
-            ]
+            recommended_doctors=scored_doctors
         )
         
-        # Save structural transaction payload to your database history log
+        # Save structural transaction log to database
         new_diagnosis = Diagnosis(
             user_id=current_user.id,
-            transcript=request.transcribed_text,
+            transcript=payload.text,
             ai_analysis=final_payload.model_dump()
         )
         db.add(new_diagnosis)

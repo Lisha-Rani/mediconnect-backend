@@ -69,9 +69,21 @@ class Doctor(Base):
     registration_number = Column(String(100), unique=True, nullable=False) 
     specialization = Column(String(100), nullable=False)
     hospital_clinic = Column(String(200), nullable=False)
+    city = Column(String(100), nullable=False)
     email = Column(String(255), unique=True, index=True, nullable=False)
     password_hash = Column(String(255), nullable=False) 
+    consultation_fee = Column(Integer, default=500, nullable=False)  # 👈 Added here
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
-    hospital_clinic = Column(String(200), nullable=False)
-    city = Column(String(100), nullable=False) # Add this!
+class Appointment(Base):
+    __tablename__ = "appointments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    doctor_id = Column(Integer, ForeignKey("doctors.id"), nullable=False)
+    appointment_date = Column(String(50), nullable=False)
+    appointment_time = Column(String(50), nullable=False)
+    status = Column(String(50), default="SCHEDULED", nullable=False)  # SCHEDULED, CANCELLED
+    payment_method = Column(String(50), nullable=False)  # MOCK_ONLINE, PAY_AT_CLINIC
+    amount = Column(Integer, default=0)
+    payment_status = Column(String(50), default="PENDING", nullable=False)  # PENDING, COMPLETED
+    created_at = Column(DateTime, default=datetime.utcnow)
