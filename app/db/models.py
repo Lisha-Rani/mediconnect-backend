@@ -87,3 +87,22 @@ class Appointment(Base):
     amount = Column(Integer, default=0)
     payment_status = Column(String(50), default="PENDING", nullable=False)  # PENDING, COMPLETED
     created_at = Column(DateTime, default=datetime.utcnow)
+    # Append to the bottom of app/db/models.py
+
+class VisitRecord(Base):
+    __tablename__ = "visit_records"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    appointment_id = Column(UUID(as_uuid=True), ForeignKey("appointments.id"), nullable=False, unique=True)
+    doctor_advice = Column(Text, nullable=False)
+    diagnosis_notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    appointment_id = Column(UUID(as_uuid=True), ForeignKey("appointments.id"), nullable=False)
+    sender_type = Column(String(20), nullable=False)  # PATIENT or DOCTOR
+    message = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)

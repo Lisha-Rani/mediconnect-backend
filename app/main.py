@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
-from app.api.endpoints import ai, auth,appointments
+from app.api.endpoints import ai, auth,appointments,visits,chat
 
 # Initialize the FastAPI app
 app = FastAPI(
@@ -27,7 +27,8 @@ app.include_router(ai.router, prefix="/api/v1")
 # 2. Register Authentication Router
 app.include_router(auth.router, prefix="/api/v1/auth")
 app.include_router(appointments.router, prefix="/api/v1")
-
+app.include_router(visits.router, prefix="/api/v1")  # 👈 Mounts /api/v1/visits/complete and /download-receipt
+app.include_router(chat.router, prefix="/api/v1")
 # --- SYSTEM UTILITY ROUTES ---
 
 @app.get("/")
