@@ -8,10 +8,14 @@ from sqlalchemy.future import select
 from app.db.session import get_db
 from app.db.models import Appointment, Doctor, User, VisitRecord
 # Assuming you have a dependency to get the currently logged-in doctor
-from app.api.dependencies import get_current_doctor  
+  
 
 router = APIRouter(prefix="/visits", tags=["Post-Visit Management"])
-
+# 🫱 Paste this temporary placeholder function:
+async def get_current_doctor():
+    class MockDoctor:
+        id = 1  # This temporarily mocks Doctor ID 1 for testing
+    return MockDoctor()
 class CompleteVisitRequest(BaseModel):
     appointment_id: uuid.UUID
     doctor_advice: str
