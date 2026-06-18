@@ -140,7 +140,7 @@ async def process_medical_triage(
     payload: TriageRequest,
     fastapi_req: Request,
     db: AsyncSession = Depends(get_db),
-    #current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     try:
         # --- PHASE 1: THE RETRIEVER (RAG) ---
@@ -279,13 +279,17 @@ async def process_medical_triage(
         )
         
         # Save structural transaction log to database
-        # new_diagnosis = Diagnosis(
-        #     user_id=1,
-        #     transcript=payload.text,
-        #     ai_analysis=final_payload.model_dump()
-        # )
-        # db.add(new_diagnosis)
-        # await db.commit()
+         # --- PHASE 5: SAVE STRUCTURAL TRANSACTION LOG ---
+        new_diagnosis = Diagnosis(
+            user_id=current_user.id, # 👈 Re-link this to the real verified user ID!
+            transcript=payload.text,
+            ai_analysis=final_payload.model_dump()
+        )
+        
+        # 🔓 UNCOMMENT THESE DATABASE COMMITS:
+        db.add(new_diagnosis)
+        await db.commit()
+        
         return final_payload
 
     except Exception as e:
