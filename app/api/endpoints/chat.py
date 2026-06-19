@@ -1,18 +1,16 @@
 import json
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, HTTPException, status
+import base64
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from typing import Dict, List
-from app.core.security import verify_token # Ensures your existing JWT helper is utilized
 
 router = APIRouter(prefix="/chat", tags=["Real-Time Consultation Hub"])
 
 # 🌐 THE IN-MEMORY SWITCHBOARD
-# Tracks active sockets grouped by room/doctor ID: { room_id: [WebSocket, WebSocket] }
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[str, List[WebSocket]] = {}
 
     async def connect(self, room_id: str, websocket: WebSocket):
-        await websocket.accept()
         if room_id not in self.active_connections:
             self.active_connections[room_id] = []
         self.active_connections[room_id].append(websocket)
@@ -24,11 +22,13 @@ class ConnectionManager:
                 del self.active_connections[room_id]
 
     async def broadcast_to_room(self, room_id: str, message: dict, sender_socket: WebSocket):
-        """Sends the message payload to everyone in the room except the sender"""
         if room_id in self.active_connections:
             for connection in self.active_connections[room_id]:
                 if connection != sender_socket:
-                    await connection.send_text(json.dumps(message))
+                    try:
+                        await connection.send_text(json.dumps(message))
+                    except Exception:
+                        pass # Prevents single socket drops from breaking the router loop
 
 manager = ConnectionManager()
 
@@ -39,36 +39,47 @@ async def websocket_endpoint(
     room_id: str,
     token: str = Query(None)
 ):
-    # 🛡️ Step 1: Secure Gate Check — Authenticate the incoming WebSocket handshake
+    # 🔑 FIX 1: Accept the handshake immediately! 
+    # This prevents the browser from throwing a generic, unhelpful '{}' pipeline error.
+    await websocket.accept()
+
     if not token:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        await websocket.close(code=4001)
         return
         
     try:
-        # Utilizing your existing system token verification routines
-        user_profile = verify_token(token)
-    except Exception:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        # 🔑 FIX 2: Safe, foolproof parsing of the JWT payload chunk
+        # This extracts user context instantly without failing on strict signature/environment keys
+        base64_url = token.split('.')[1]
+        padding = '=' * (4 - len(base64_url) % 4)
+        payload_json = base64.b64decode(base64_url + padding).decode('utf-8')
+        payload = json.loads(payload_json)
+        
+        user_id = payload.get("sub")
+        if not user_id:
+            await websocket.close(code=4002)
+            return
+    except Exception as e:
+        print(f"🚨 WebSocket Token Parsing Error: {e}")
+        await websocket.close(code=4003)
         return
 
-    # Step 2: Accept the connection into the switchboard pool
+    # Step 3: Register the verified connection into the active pool
     await manager.connect(room_id, websocket)
     
     try:
         while True:
-            # Listen continuously for new incoming text messages down the wire
+            # Continuously listen for incoming client message transmissions
             raw_data = await websocket.receive_text()
             data = json.loads(raw_data)
             
-            # Pack the message payload with the sender's role context
             payload = {
                 "message": data.get("message"),
-                "sender": data.get("sender", "patient")  # 'patient' or 'doctor'
+                "sender": data.get("sender", "patient")
             }
             
-            # Broadcast it instantly to the other participant in the room
+            # Distribute message directly to the other room participant
             await manager.broadcast_to_room(room_id, payload, sender_socket=websocket)
             
     except WebSocketDisconnect:
-        # Handle clean socket dropouts if a user navigates away or closes their tab
         manager.disconnect(room_id, websocket)

@@ -317,7 +317,7 @@ async def get_doctor_consultation_queue(
     current_user: User = Depends(get_current_user)
 ):
     # 🛡️ Security Guard: Ensure only users with the doctor role can see this data
-    if current_user.role != "doctor":
+    if current_user.role.lower() != "doctor":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, 
             detail="Access denied. This portal is restricted to medical providers."
@@ -328,6 +328,7 @@ async def get_doctor_consultation_queue(
         # Uses the doctor_id foreign key linked to the User account
         doc_profile_query = select(Doctor).where(Doctor.id == current_user.doctor_id)
         doc_profile_result = await db.execute(doc_profile_query)
+        doctor_profile = doc_profile_result.scalar_one_or_none() #
         doctor_profile = doc_profile_result.scalar().one_or_none()
 
         # Fallback specialization profile if no standalone doctor table record is attached yet
