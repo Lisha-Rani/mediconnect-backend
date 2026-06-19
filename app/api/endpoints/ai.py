@@ -114,7 +114,7 @@ async def fetch_youtube_remedies(search_term: str) -> list[dict]:
                         thumbnail_list = v.get("thumbnail", {}).get("thumbnails", [])
                         thumbnail = thumbnail_list[0].get("url") if thumbnail_list else None
                         
-                        if video_id and len(video_list) < 3:
+                        if video_id and len(video_list) < 15:
                             video_list.append({
                                 "title": title,
                                 "link": f"https://www.youtube.com/watch?v={video_id}",
