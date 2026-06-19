@@ -310,3 +310,54 @@ async def get_patient_history(
         return diagnoses
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+@router.get("/doctor/queue")
+async def get_doctor_consultation_queue(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # 🛡️ Security Guard: Ensure only users with the doctor role can see this data
+    if current_user.role != "doctor":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="Access denied. This portal is restricted to medical providers."
+        )
+
+    try:
+        # 🔍 1. Fetch this doctor's specific specialty profile from the database
+        # Uses the doctor_id foreign key linked to the User account
+        doc_profile_query = select(Doctor).where(Doctor.id == current_user.doctor_id)
+        doc_profile_result = await db.execute(doc_profile_query)
+        doctor_profile = doc_profile_result.scalar().one_or_none()
+
+        # Fallback specialization profile if no standalone doctor table record is attached yet
+        specialty = doctor_profile.specialization if doctor_profile else "General Physician"
+
+        # 📥 2. Pull all patient triage records from the Diagnosis table
+        result = await db.execute(
+            select(Diagnosis).order_by(Diagnosis.created_at.desc()).limit(20)
+        )
+        all_diagnoses = result.scalars().all()
+
+        # 🎯 3. Filter the queue down to cases matching this doctor's exact specialty
+        active_queue = []
+        for diag in all_diagnoses:
+            ai_data = diag.ai_analysis or {}
+            analysis_block = ai_data.get("analysis", {})
+            target_specialty = analysis_block.get("recommended_specialization", "")
+
+            # If the case matches the doctor's field, clean it up for the frontend UI
+            if specialty.lower() in target_specialty.lower() or target_specialty.lower() in specialty.lower():
+                active_queue.append({
+                    "id": diag.id,
+                    "patient_id": diag.user_id,
+                    "transcript": diag.transcript,
+                    "urgency_level": analysis_block.get("urgency_level", "Low"),
+                    "recommended_action": analysis_block.get("recommended_action", "Monitor symptoms."),
+                    "created_at": diag.created_at
+                })
+
+        return active_queue
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
