@@ -1,3 +1,4 @@
+import uuid  # 🔄 Added to generate clean UUID strings for user accounts
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -11,19 +12,21 @@ from app.schemas.ai import DoctorCreate, DoctorResponse
 
 router = APIRouter()
 
+# 👤 1. STANDARD PATIENT REGISTRATION
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     
-    # 1. Check if user already exists
+    # Check if user already exists
     result = await db.execute(select(User).where(User.email == user_data.email))
     existing_user = result.scalars().first()
     
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
         
-    # 2. Hash password and save new user
+    # Hash password and save new user with an explicit UUID string string
     hashed_password = get_password_hash(user_data.password)
     new_user = User(
+        id=str(uuid.uuid4()),  # 🔄 FIX: Explicitly provision a UUID to match the database configuration
         email=user_data.email,
         hashed_password=hashed_password,
         role=user_data.role
@@ -35,15 +38,15 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     
     return new_user
 
+
+# 🔑 2. SECURE USER LOGIN GATEWAY
 @router.post("/login", response_model=Token)
 async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
-    # 1. Find user by email (OAuth2 uses 'username' field for the email)
-    # 🫱 Paste this temporary check at the top of your login function:
-    
+    # Find user by email (OAuth2 uses 'username' field for the email payload context)
     result = await db.execute(select(User).where(User.email == form_data.username))
     user = result.scalars().first()
     
-    # 2. Verify password
+    # Verify user exists and credentials match
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -51,52 +54,57 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSessi
             headers={"WWW-Authenticate": "Bearer"},
         )
         
-    # 3. Generate JWT Token
-    access_token = create_access_token(data={"sub": str(user.id), "role": user.role.value})
+    # 🔄 FIX: Generate the JWT Token safely without trying to call .value on a plain string column!
+    access_token = create_access_token(
+        data={
+            "sub": str(user.id), 
+            "role": str(user.role)  # Reads the string column value directly out of the user object
+        }
+    )
     
     return {"access_token": access_token, "token_type": "bearer"}
 
-@router.post("/register/doctor",response_model=DoctorResponse,  status_code=status.HTTP_201_CREATED)
+
+# 🩺 3. SPECIALIZED MEDICAL PROVIDER REGISTRATION
+@router.post("/register/doctor", response_model=DoctorResponse, status_code=status.HTTP_201_CREATED)
 async def register_doctor(doctor_data: DoctorCreate, db: AsyncSession = Depends(get_db)):
     
-    # 1. Check if the email already exists in the User table
+    # Check if the email already exists in the User table
     user_check = await db.execute(select(User).where(User.email == doctor_data.email))
     if user_check.scalars().first():
         raise HTTPException(status_code=400, detail="Email already registered to a user account.")
         
-    # 2. Check if registration number already exists in Doctor table
+    # Check if registration number already exists in Doctor table
     doc_check = await db.execute(select(Doctor).where(Doctor.registration_number == doctor_data.registration_number))
     if doc_check.scalars().first():
         raise HTTPException(status_code=400, detail="Medical registration number already exists.")
 
-    # 3. Hash the password
+    # Hash the password
     hashed_password = get_password_hash(doctor_data.password)
 
-    # 4. Create the Doctor Profile record first (with City added!)
+    # Create the Doctor Profile record first
     new_doctor_profile = Doctor(
         first_name=doctor_data.first_name,
         last_name=doctor_data.last_name,
-        registration_number=doctor_data.registration_number,
         specialization=doctor_data.specialization,
         hospital_clinic=doctor_data.hospital_clinic,
-        city=doctor_data.city,  # 👈 Added here to save to database!
+        city=doctor_data.city,
         consultation_fee=doctor_data.consultation_fee,
-        email=doctor_data.email,
-        password_hash=hashed_password
     )
     db.add(new_doctor_profile)
     await db.flush()  # Pushes profile to DB to generate the integer new_doctor_profile.id
 
-    # 5. Create the User login account and link it to the Doctor profile
+    # Create the User login account and link it to the Doctor profile
     new_user = User(
+        id=str(uuid.uuid4()),  # 🔄 FIX: Explicitly provision a UUID string here as well!
         email=doctor_data.email,
         hashed_password=hashed_password,
-        role=RoleEnum.DOCTOR,  # Uses your exact uppercase RoleEnum object
+        role=RoleEnum.DOCTOR.value,  # 🔄 FIX: Converted enum instance to plain string for database write safety
         doctor_id=new_doctor_profile.id  # Links the account to the profile
     )
     db.add(new_user)
     
-    # 6. Safely commit both items at once
+    # Safely commit both items at once
     await db.commit()
     await db.refresh(new_doctor_profile)
     
