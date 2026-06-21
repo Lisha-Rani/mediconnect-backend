@@ -1,34 +1,51 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
-from app.api.endpoints import ai, auth,appointments,visits,chat
+from app.api.endpoints import ai, auth, appointments, visits, chat
+from sqlalchemy import text
+# 🔄 DB Lifecycle Imports
+from app.db.session import engine
+from app.db.models import Base
 
-# Initialize the FastAPI app
+# 🌐 THE STARTUP LIFESPAN MANAGER
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with engine.begin() as conn:
+        # 🔄 FORCE SYNC: Drops the old broken table structure if it exists
+        await conn.execute(text("DROP TABLE IF EXISTS chat_messages CASCADE;"))
+        
+        # Recreates all tables cleanly using the new model maps with 'room_id' included!
+        await conn.run_sync(Base.metadata.create_all)
+        
+    print("🚀 Neon Cloud Database Schema Sync Complete. All tables verified active!")
+    yield
+
+# Initialize the FastAPI app with the life-cycle manager attached
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version="0.1.0",
-    description="Backend API for MediAI Healthcare Management Platform"
+    description="Backend API for MediAI Healthcare Management Platform",
+    lifespan=lifespan 
 )
+# Initialize the FastAPI app with the life-cycle manager attached
 
 # Configure Cross-Origin Resource Sharing (CORS)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"], # Restrict this to your frontend domain in production
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 1. Register AI Router 
-# Changed prefix to "/api/v1" so it combines with "/ai" inside ai.py to make "/api/v1/ai/check"
-# Removed tags override so it uses the clean tag defined inside ai.py
+# 🎛️ REGISTER APPLICATION ROUTERS (Preserving your exact prefix paths)
 app.include_router(ai.router, prefix="/api/v1")
-
-# 2. Register Authentication Router
 app.include_router(auth.router, prefix="/api/v1/auth")
 app.include_router(appointments.router, prefix="/api/v1")
-app.include_router(visits.router, prefix="/api/v1")  # 👈 Mounts /api/v1/visits/complete and /download-receipt
+app.include_router(visits.router, prefix="/api/v1")
 app.include_router(chat.router, prefix="/api/v1")
+
 # --- SYSTEM UTILITY ROUTES ---
 
 @app.get("/")

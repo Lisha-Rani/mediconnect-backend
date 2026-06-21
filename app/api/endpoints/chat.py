@@ -1,16 +1,18 @@
 import json
 import base64
+import sys
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from typing import Dict, List
 
-from app.api.dependencies import get_db # Adjust based on your DB dependency path
-from app.db.session import async_session_maker # Used to generate isolated database transactions inside loops
+# 🔄 FIX: Import get_db and async_session_maker straight from your verified session.py file!
+from app.db.session import async_session_maker, get_db 
 from app.db.models import ChatMessage
 
 router = APIRouter(prefix="/chat", tags=["Real-Time Consultation Hub"])
 
+# 🌐 THE IN-MEMORY SWITCHBOARD
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[str, List[WebSocket]] = {}
@@ -37,16 +39,19 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-# 📥 NEW: HTTP GET Route to reload past history records on mount
+# 📥 HTTP GET Route to reload past history records on mount
 @router.get("/history/{room_id}")
 async def get_chat_history(room_id: str, db: AsyncSession = Depends(get_db)):
     try:
+        print(f"🔍 DEBUG: Fetching history logs for room channel: '{room_id}'")
+        
         result = await db.execute(
             select(ChatMessage)
             .where(ChatMessage.room_id == room_id)
             .order_by(ChatMessage.created_at.asc())
         )
         history = result.scalars().all()
+        
         return [
             {
                 "sender": msg.sender,
@@ -56,9 +61,14 @@ async def get_chat_history(room_id: str, db: AsyncSession = Depends(get_db)):
             for msg in history
         ]
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # 🚨 CRITICAL LOGGER: This prints the exact database issue directly to your terminal screen!
+        print("\n" + "="*60)
+        print(f"🚨 DATABASE HISTORY CRASH DETECTED:")
+        print(f"Error Details: {str(e)}")
+        print("="*60 + "\n")
+        raise HTTPException(status_code=500, detail="Internal server database logs failure.")
 
-# ⚡ WebSocket Pipeline with Auto-Persistence Engine
+# ⚡ THE DUAL-STREAM WEBSOCKET ROUTER WITH PERSISTENCE
 @router.websocket("/ws/{room_id}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str, token: str = Query(None)):
     await websocket.accept()
@@ -89,7 +99,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, token: str = Qu
             sender_role = data.get("sender", "patient")
             message_text = data.get("message", "")
 
-            # 💾 PERSIST TO NEON POSTGRESQL: Commit message to database asynchronously
+            # Save the message to Neon PostgreSQL database asynchronously
             async with async_session_maker() as db_session:
                 new_msg = ChatMessage(
                     room_id=room_id,
@@ -99,7 +109,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, token: str = Qu
                 db_session.add(new_msg)
                 await db_session.commit()
             
-            # Broadcast out to other room client
+            # Broadcast the payload out to other room participant
             payload = {
                 "message": message_text,
                 "sender": sender_role

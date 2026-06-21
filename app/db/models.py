@@ -1,5 +1,5 @@
 import enum
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, JSON
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, JSON, UUID # 🔄 Added UUID here
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.db.session import Base
@@ -14,7 +14,8 @@ class RoleEnum(str, enum.Enum):
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # 🔄 FIX: Changed from Integer to UUID to match your existing Neon table setup
+    id = Column(UUID, primary_key=True, index=True)
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
     role = Column(String, default=RoleEnum.PATIENT.value)
@@ -45,7 +46,8 @@ class Appointment(Base):
     __tablename__ = "appointments"
 
     id = Column(Integer, primary_key=True, index=True)
-    patient_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # 🔄 FIX: Changed patient_id to UUID to match users.id
+    patient_id = Column(UUID, ForeignKey("users.id"), nullable=False)
     doctor_id = Column(Integer, ForeignKey("doctors.id"), nullable=False)
     appointment_date = Column(DateTime, nullable=False)
     status = Column(String, default="scheduled")
@@ -53,12 +55,12 @@ class Appointment(Base):
 
 
 # 🏥 5. CLINICAL VISITS RECORD MODEL
-# 🔄 FIX: Renamed class from Visit to VisitRecord to fix the visits.py import crash
 class VisitRecord(Base):
     __tablename__ = "visits"
 
     id = Column(Integer, primary_key=True, index=True)
-    patient_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # 🔄 FIX: Changed patient_id to UUID to match users.id
+    patient_id = Column(UUID, ForeignKey("users.id"), nullable=False)
     doctor_id = Column(Integer, ForeignKey("doctors.id"), nullable=False)
     visit_date = Column(DateTime(timezone=True), server_default=func.now())
     diagnosis_notes = Column(Text, nullable=True)
@@ -70,7 +72,8 @@ class Diagnosis(Base):
     __tablename__ = "diagnoses"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    # 🔄 FIX: Changed user_id to UUID to match users.id
+    user_id = Column(UUID, ForeignKey("users.id"), nullable=True)
     transcript = Column(Text, nullable=False)
     ai_analysis = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
