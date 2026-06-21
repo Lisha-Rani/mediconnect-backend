@@ -1,7 +1,8 @@
 import enum
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, JSON, UUID # 🔄 Added UUID here
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, JSON, UUID
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
+from pgvector.sqlalchemy import Vector # 🧠 🔄 Added for pgvector RAG support!
 from app.db.session import Base
 
 # 🔑 1. ROLE DEFINITION ENUM
@@ -14,7 +15,6 @@ class RoleEnum(str, enum.Enum):
 class User(Base):
     __tablename__ = "users"
 
-    # 🔄 FIX: Changed from Integer to UUID to match your existing Neon table setup
     id = Column(UUID, primary_key=True, index=True)
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
@@ -46,7 +46,6 @@ class Appointment(Base):
     __tablename__ = "appointments"
 
     id = Column(Integer, primary_key=True, index=True)
-    # 🔄 FIX: Changed patient_id to UUID to match users.id
     patient_id = Column(UUID, ForeignKey("users.id"), nullable=False)
     doctor_id = Column(Integer, ForeignKey("doctors.id"), nullable=False)
     appointment_date = Column(DateTime, nullable=False)
@@ -59,7 +58,6 @@ class VisitRecord(Base):
     __tablename__ = "visits"
 
     id = Column(Integer, primary_key=True, index=True)
-    # 🔄 FIX: Changed patient_id to UUID to match users.id
     patient_id = Column(UUID, ForeignKey("users.id"), nullable=False)
     doctor_id = Column(Integer, ForeignKey("doctors.id"), nullable=False)
     visit_date = Column(DateTime(timezone=True), server_default=func.now())
@@ -72,7 +70,6 @@ class Diagnosis(Base):
     __tablename__ = "diagnoses"
 
     id = Column(Integer, primary_key=True, index=True)
-    # 🔄 FIX: Changed user_id to UUID to match users.id
     user_id = Column(UUID, ForeignKey("users.id"), nullable=True)
     transcript = Column(Text, nullable=False)
     ai_analysis = Column(JSON, nullable=True)
@@ -87,6 +84,11 @@ class MedicalKnowledge(Base):
     disease_condition = Column(String, index=True, nullable=False)
     symptoms_summary = Column(Text, nullable=False)
     recommended_specialty = Column(String, nullable=False)
+    
+    # 🔄 FIX: Restored the embedding column for vector similarity search!
+    # Note: 768 dimensions is standard for Gemini text-embedding-004. 
+    # If your project uses OpenAI (text-embedding-ada-002), change this value to 1536!
+    embedding = Column(Vector(384), nullable=True) 
 
 
 # 💬 8. PERSISTENT CHAT MESSAGE MODEL

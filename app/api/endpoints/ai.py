@@ -179,6 +179,15 @@ async def process_medical_triage(
                        "Format Instructions:\n{format_instructions}"),
             ("human", "Patient query/transcript: {transcript}")
         ])
+    except Exception as e:
+        # 🚨 CRITICAL AI LOGGER: Prints the exact code exception straight to your Uvicorn console!
+        print("\n" + "="*60)
+        print(f"🚨 AI ENDPOINT CRASH DETECTED:")
+        print(f"Error Details: {str(e)}")
+        import traceback
+        traceback.print_exc() # Prints the exact line number where it failed
+        print("="*60 + "\n")
+        raise HTTPException(status_code=500, detail="Internal AI engine processing failure.")
         
         chain = prompt | llm | parser
         ai_diagnosis = await chain.ainvoke({

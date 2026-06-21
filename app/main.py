@@ -12,15 +12,14 @@ from app.db.models import Base
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
-        # 🔄 FORCE SYNC: Drops the old broken table structure if it exists
-        await conn.execute(text("DROP TABLE IF EXISTS chat_messages CASCADE;"))
+        # 🛡️ Vital: Clears the old 768 table so it re-builds at 384
+        await conn.execute(text("DROP TABLE IF EXISTS medical_knowledge CASCADE;"))
         
-        # Recreates all tables cleanly using the new model maps with 'room_id' included!
+        # Re-syncs the entire structure layout
         await conn.run_sync(Base.metadata.create_all)
         
     print("🚀 Neon Cloud Database Schema Sync Complete. All tables verified active!")
     yield
-
 # Initialize the FastAPI app with the life-cycle manager attached
 app = FastAPI(
     title=settings.PROJECT_NAME,
