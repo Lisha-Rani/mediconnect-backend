@@ -13,23 +13,31 @@ from app.schemas.ai import DoctorCreate, DoctorResponse
 router = APIRouter()
 
 # 👤 1. STANDARD PATIENT REGISTRATION
+# 👤 STANDARD PATIENT REGISTRATION
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     
-    # Check if user already exists
+    # 1. Check if user already exists
     result = await db.execute(select(User).where(User.email == user_data.email))
     existing_user = result.scalars().first()
     
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
         
-    # Hash password and save new user with an explicit UUID string string
+    # 2. Hash password
     hashed_password = get_password_hash(user_data.password)
+    
+    # 🔄 FIX: Normalize the incoming role format so it perfectly matches the Pydantic constraints
+    # If the frontend sends "PATIENT", "patient", or "Patient", it converts it cleanly to "patient"
+    assigned_role = RoleEnum.DOCTOR.value if "doctor" in user_data.role.lower() else RoleEnum.PATIENT.value
+    
+    # 3. Save new user with structural fields included
     new_user = User(
-        id=str(uuid.uuid4()),  # 🔄 FIX: Explicitly provision a UUID to match the database configuration
+        id=str(uuid.uuid4()),
         email=user_data.email,
         hashed_password=hashed_password,
-        role=user_data.role
+        role=assigned_role,  # 🔄 Uses the cleanly matched role string
+        is_active=True
     )
     
     db.add(new_user)
@@ -37,7 +45,6 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     await db.refresh(new_user)
     
     return new_user
-
 
 # 🔑 2. SECURE USER LOGIN GATEWAY
 @router.post("/login", response_model=Token)

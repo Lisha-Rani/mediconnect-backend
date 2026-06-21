@@ -23,9 +23,9 @@ router = APIRouter(prefix="/ai", tags=["AI Medical Engine"])
 # --- PYDANTIC MODELS ---
 class TriageRequest(BaseModel):
     text: str
-    latitude: float | None = None   # Sent if user clicks "Use Current Location" or drops a map pin
-    longitude: float | None = None  # Sent if user clicks "Use Current Location" or drops a map pin
-    explicit_city: str | None = None # Sent if user manually types/selects a city name from a search dropdown
+    latitude: float | None = None   
+    longitude: float | None = None  
+    explicit_city: str | None = None 
 
 class SymptomAnalysis(BaseModel):
     primary_symptoms: list[str] = Field(description="List of main symptoms extracted")
@@ -82,7 +82,6 @@ async def get_city_from_coords(lat: float, lon: float) -> str | None:
             response = await client.get(url, headers=headers, timeout=3.0)
             if response.status_code == 200:
                 address = response.json().get("address", {})
-                # Extract city metadata cleanly based on geography boundaries
                 return address.get("city") or address.get("town") or address.get("village")
         except Exception as e:
             print(f"Reverse geocoding failed: {e}")
@@ -158,7 +157,12 @@ async def process_medical_triage(
             .limit(2)
         )
         relevant_docs = result.scalars().all()
-        context_text = "\n\n".join([doc.content for doc in relevant_docs])
+        
+        # 🔄 FIX: Map explicitly to your structural table columns instead of non-existent .content
+        context_text = "\n\n".join([
+            f"Condition: {doc.disease_condition}\nSymptoms: {doc.symptoms_summary}\nSpecialty: {doc.recommended_specialty}" 
+            for doc in relevant_docs
+        ])
 
         # --- PHASE 2: THE AI TRIAGE ENGINE (Gemini) ---
         llm = ChatGoogleGenerativeAI(
@@ -179,16 +183,8 @@ async def process_medical_triage(
                        "Format Instructions:\n{format_instructions}"),
             ("human", "Patient query/transcript: {transcript}")
         ])
-    except Exception as e:
-        # 🚨 CRITICAL AI LOGGER: Prints the exact code exception straight to your Uvicorn console!
-        print("\n" + "="*60)
-        print(f"🚨 AI ENDPOINT CRASH DETECTED:")
-        print(f"Error Details: {str(e)}")
-        import traceback
-        traceback.print_exc() # Prints the exact line number where it failed
-        print("="*60 + "\n")
-        raise HTTPException(status_code=500, detail="Internal AI engine processing failure.")
         
+        # 🔄 FIX: Brought the entire chain execution block inside the try scope!
         chain = prompt | llm | parser
         ai_diagnosis = await chain.ainvoke({
             "transcript": payload.text,
@@ -205,15 +201,11 @@ async def process_medical_triage(
         # --- PHASE 4: SMART DYNAMIC LOCATION RESOLUTION ---
         user_city = None
 
-        # Priority 1: User explicitly searched/typed a city inside the map search bar
         if payload.explicit_city:
             user_city = payload.explicit_city
-
-        # Priority 2: User clicked "Use Current Location" or pinned a custom spot (GPS Coordinates provided)
         elif payload.latitude is not None and payload.longitude is not None:
             user_city = await get_city_from_coords(payload.latitude, payload.longitude)
 
-        # Priority 3: Ultimate System Fallback - Resolve via request network IP address
         if not user_city:
             client_ip = fastapi_req.client.host
             user_city = await get_city_from_ip(client_ip)
@@ -224,6 +216,7 @@ async def process_medical_triage(
         doc_query = select(Doctor).filter(Doctor.specialization.ilike(f"%{target_specialty}%"))
         doc_result = await db.execute(doc_query)
         all_specialists = doc_result.scalars().all()
+        
         if not all_specialists:
             class TestDoctor:
                 id = 101
@@ -231,7 +224,7 @@ async def process_medical_triage(
                 last_name = "vardhan rajpoot"
                 specialization = "General Physician"
                 hospital_clinic = "Apollo Clinic"
-                city = "Patna" # Matches the local IP network fallback city!
+                city = "Patna" 
                 email = "dr.amit@mediai.com"
                 consultation_fee = 450
                 experience_years = 12
@@ -242,15 +235,13 @@ async def process_medical_triage(
             score = 0
             reasons = []
             
-            # Location Proximity Scoring
-            if doc.city and doc.city.lower().strip() == user_city.lower().strip():
+            if doc.city and user_city and doc.city.lower().strip() == user_city.lower().strip():
                 score += 70
                 reasons.append(f"Located directly in your city ({user_city})")
             else:
                 score += 20
                 reasons.append(f"Available for remote/tele-consultation from {doc.city or 'nearby'}")
                 
-            # Experience Metrics
             has_experience_field = hasattr(doc, 'experience_years') and doc.experience_years is not None
             if has_experience_field:
                 exp = doc.experience_years
@@ -262,6 +253,7 @@ async def process_medical_triage(
                     reasons.append(f"Established practitioner ({exp} years experience)")
                 else:
                     score += 10
+                    reasons.append(f"Junior Practitioner ({exp} years experience)")
             else:
                 score += 15
             
@@ -280,29 +272,33 @@ async def process_medical_triage(
             
         scored_doctors.sort(key=lambda x: x["match_score"], reverse=True)
 
-        # Build dynamic transaction payload
         final_payload = FinalTriageResponse(
             analysis=ai_diagnosis,
-            detected_city=user_city,
+            detected_city=user_city or "Unknown",
             recommended_videos=video_list,
             recommended_doctors=scored_doctors
         )
         
-        # Save structural transaction log to database
-         # --- PHASE 5: SAVE STRUCTURAL TRANSACTION LOG ---
+        # --- PHASE 5: SAVE STRUCTURAL TRANSACTION LOG ---
         new_diagnosis = Diagnosis(
-            user_id=current_user.id, # 👈 Re-link this to the real verified user ID!
+            user_id=current_user.id, 
             transcript=payload.text,
             ai_analysis=final_payload.model_dump()
         )
         
-        # 🔓 UNCOMMENT THESE DATABASE COMMITS:
         db.add(new_diagnosis)
         await db.commit()
         
         return final_payload
 
     except Exception as e:
+        # 🚨 CRITICAL AI LOGGER: Catches any crash across the entire workflow!
+        print("\n" + "="*60)
+        print(f"🚨 AI ENDPOINT CRASH DETECTED:")
+        print(f"Error Details: {str(e)}")
+        import traceback
+        traceback.print_exc() 
+        print("="*60 + "\n")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/history")
@@ -333,7 +329,6 @@ async def get_doctor_consultation_queue(
         )
 
     try:
-        # 🔍 1. Safely look up doctor profile if it exists
         doctor_profile = None
         if hasattr(current_user, 'doctor_id') and current_user.doctor_id:
             doc_profile_query = select(Doctor).where(Doctor.id == current_user.doctor_id)
@@ -343,25 +338,20 @@ async def get_doctor_consultation_queue(
         specialty = doctor_profile.specialization if doctor_profile else None
         print(f"🔍 DEBUG: Active Logged-In Doctor Specialty: '{specialty}'")
 
-        # 📥 2. Pull recent triage logs from the Diagnosis table
         result = await db.execute(
             select(Diagnosis).order_by(Diagnosis.created_at.desc()).limit(20)
         )
         all_diagnoses = result.scalars().all()
         print(f"🔍 DEBUG: Found {len(all_diagnoses)} total diagnosis logs in the Neon Database.")
 
-        # 🎯 3. Build the queue with a smart developer fallback
         active_queue = []
         for diag in all_diagnoses:
             ai_data = diag.ai_analysis or {}
-            # Handle both flat and nested AI JSON blocks safely
             analysis_block = ai_data.get("analysis", ai_data) 
             target_specialty = analysis_block.get("recommended_specialization", "")
             
             print(f"📋 Checking DB Case #{diag.id} - AI asked for: '{target_specialty}'")
 
-            # 🛠️ DEV FALLBACK: If the doctor has no specialty set yet, show ALL cases.
-            # Otherwise, only filter if a explicit match is confirmed.
             if not specialty or specialty.lower() in target_specialty.lower() or target_specialty.lower() in specialty.lower():
                 active_queue.append({
                     "id": diag.id,

@@ -12,10 +12,10 @@ from app.db.models import Base
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
-        # 🛡️ Vital: Clears the old 768 table so it re-builds at 384
-        await conn.execute(text("DROP TABLE IF EXISTS medical_knowledge CASCADE;"))
+        # 🔄 FORCE SYNC: Clears the old structural versions so they re-build with the email layout
+          # 👈 ADD THIS LINE
         
-        # Re-syncs the entire structure layout
+        # Recreates all tables cleanly across your Neon cluster
         await conn.run_sync(Base.metadata.create_all)
         
     print("🚀 Neon Cloud Database Schema Sync Complete. All tables verified active!")

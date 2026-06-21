@@ -3,10 +3,11 @@ from app.db.models import RoleEnum
 import uuid
 from datetime import datetime
 
+# What the Backend expects (Example):
 class UserCreate(BaseModel):
-    email: EmailStr
+    email: str
     password: str
-    role: RoleEnum = RoleEnum.PATIENT
+    role: str # 'patient' or 'DOCTOR'
 
 class UserResponse(BaseModel):
     id: uuid.UUID
