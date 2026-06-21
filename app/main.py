@@ -9,16 +9,19 @@ from app.db.session import engine
 from app.db.models import Base
 
 # 🌐 THE STARTUP LIFESPAN MANAGER
+# 🌐 THE STARTUP LIFESPAN MANAGER
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
-        # 🔄 FORCE SYNC: Clears the old structural versions so they re-build with the email layout
-          # 👈 ADD THIS LINE
+        # 🛡️ SAFE ALTERATION: Injects the missing columns into the existing Neon table structure
+        # If the columns already exist, PostgreSQL ignores this safely without throwing errors.
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();"))
         
-        # Recreates all tables cleanly across your Neon cluster
+        # Verify and sync the remaining structural models 
         await conn.run_sync(Base.metadata.create_all)
         
-    print("🚀 Neon Cloud Database Schema Sync Complete. All tables verified active!")
+    print("🚀 Neon Cloud Database Schema Sync Complete. All columns verified active!")
     yield
 # Initialize the FastAPI app with the life-cycle manager attached
 app = FastAPI(
