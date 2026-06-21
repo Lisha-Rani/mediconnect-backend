@@ -1,108 +1,97 @@
-import uuid
 import enum
-from datetime import datetime
-
-# Consolidated all imports into clean, single lines
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, JSON, Enum, Text
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, JSON
 from sqlalchemy.sql import func
-from pgvector.sqlalchemy import Vector
+from sqlalchemy.orm import relationship
+from app.db.session import Base
 
-Base = declarative_base()
-
+# 🔑 1. ROLE DEFINITION ENUM
 class RoleEnum(str, enum.Enum):
-    PATIENT = "PATIENT"
+    PATIENT = "patient"
     DOCTOR = "DOCTOR"
-    ADMIN = "ADMIN"
 
+
+# 👤 2. USER ACCOUNT MODEL
 class User(Base):
     __tablename__ = "users"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
-    role = Column(Enum(RoleEnum), default=RoleEnum.PATIENT, nullable=False)
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    # Link to primary doctor
+    role = Column(String, default=RoleEnum.PATIENT.value)
     doctor_id = Column(Integer, ForeignKey("doctors.id"), nullable=True)
 
-class Diagnosis(Base):
-    __tablename__ = "diagnoses"
+    # Relationships
+    doctor_profile = relationship("Doctor", back_populates="user_accounts")
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
-    
-    # FIX 1: Changed from Integer to UUID to match the User table perfectly!
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False) 
-    
-    transcript = Column(String)
-    ai_analysis = Column(JSON)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    # Link back to user
-    user = relationship("User", backref="diagnoses")
-    
-    # Link to reviewing doctor
-    doctor_id = Column(Integer, ForeignKey("doctors.id"), nullable=True)
-    
-    # Doctor workflow columns (FIX 2: Text is now properly imported)
-    diagnosis_title = Column(String(255), nullable=True)
-    description = Column(Text, nullable=True)
-    prescription_notes = Column(Text, nullable=True)
-
-class MedicalKnowledge(Base):
-    __tablename__ = "medical_knowledge"
-
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
-    content = Column(String) 
-    embedding = Column(Vector(384)) 
-    source = Column(String) 
-
+# 🩺 3. MEDICAL PROVIDER PROFILE MODEL
 class Doctor(Base):
     __tablename__ = "doctors"
 
     id = Column(Integer, primary_key=True, index=True)
-    first_name = Column(String(100), nullable=False)
-    last_name = Column(String(100), nullable=False)
-    registration_number = Column(String(100), unique=True, nullable=False) 
-    specialization = Column(String(100), nullable=False)
-    hospital_clinic = Column(String(200), nullable=False)
-    city = Column(String(100), nullable=False)
-    email = Column(String(255), unique=True, index=True, nullable=False)
-    password_hash = Column(String(255), nullable=False) 
-    consultation_fee = Column(Integer, default=500, nullable=False)  # 👈 Added here
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    first_name = Column(String, nullable=False)
+    last_name = Column(String, nullable=False)
+    specialization = Column(String, nullable=False)
+    hospital_clinic = Column(String, nullable=False)
+    city = Column(String, nullable=False)
+    consultation_fee = Column(Integer, default=450)
+
+    # Relationships
+    user_accounts = relationship("User", back_populates="doctor_profile")
+
+
+# 📅 4. APPOINTMENT RESERVATIONS MODEL
 class Appointment(Base):
     __tablename__ = "appointments"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    id = Column(Integer, primary_key=True, index=True)
+    patient_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     doctor_id = Column(Integer, ForeignKey("doctors.id"), nullable=False)
-    appointment_date = Column(String(50), nullable=False)
-    appointment_time = Column(String(50), nullable=False)
-    status = Column(String(50), default="SCHEDULED", nullable=False)  # SCHEDULED, CANCELLED
-    payment_method = Column(String(50), nullable=False)  # MOCK_ONLINE, PAY_AT_CLINIC
-    amount = Column(Integer, default=0)
-    payment_status = Column(String(50), default="PENDING", nullable=False)  # PENDING, COMPLETED
-    created_at = Column(DateTime, default=datetime.utcnow)
-    # Append to the bottom of app/db/models.py
+    appointment_date = Column(DateTime, nullable=False)
+    status = Column(String, default="scheduled")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+
+# 🏥 5. CLINICAL VISITS RECORD MODEL
+# 🔄 FIX: Renamed class from Visit to VisitRecord to fix the visits.py import crash
 class VisitRecord(Base):
-    __tablename__ = "visit_records"
+    __tablename__ = "visits"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    appointment_id = Column(UUID(as_uuid=True), ForeignKey("appointments.id"), nullable=False, unique=True)
-    doctor_advice = Column(Text, nullable=False)
+    id = Column(Integer, primary_key=True, index=True)
+    patient_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    doctor_id = Column(Integer, ForeignKey("doctors.id"), nullable=False)
+    visit_date = Column(DateTime(timezone=True), server_default=func.now())
     diagnosis_notes = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    prescription = Column(Text, nullable=True)
 
+
+# 📊 6. AI TRIAGE & DIAGNOSIS LOGS MODEL
+class Diagnosis(Base):
+    __tablename__ = "diagnoses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    transcript = Column(Text, nullable=False)
+    ai_analysis = Column(JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+# 🧠 7. KNOWLEDGE RETRIEVAL NODE MODEL (RAG Context)
+class MedicalKnowledge(Base):
+    __tablename__ = "medical_knowledge"
+
+    id = Column(Integer, primary_key=True, index=True)
+    disease_condition = Column(String, index=True, nullable=False)
+    symptoms_summary = Column(Text, nullable=False)
+    recommended_specialty = Column(String, nullable=False)
+
+
+# 💬 8. PERSISTENT CHAT MESSAGE MODEL
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
 
     id = Column(Integer, primary_key=True, index=True)
-    appointment_id = Column(UUID(as_uuid=True), ForeignKey("appointments.id"), nullable=False)
-    sender_type = Column(String(20), nullable=False)  # PATIENT or DOCTOR
+    room_id = Column(String, index=True, nullable=False)
+    sender = Column(String, nullable=False)
     message = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

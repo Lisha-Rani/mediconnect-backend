@@ -3,6 +3,7 @@ import json
 import httpx
 import os
 from fastapi import APIRouter, HTTPException, Depends, Request, status
+from sqlalchemy import inspect
 from pydantic import BaseModel, Field
 from langchain_huggingface import HuggingFaceEndpointEmbeddings
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -316,49 +317,54 @@ async def get_doctor_consultation_queue(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # 🛡️ Security Guard: Ensure only users with the doctor role can see this data
     if current_user.role.lower() != "doctor":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, 
-            detail="Access denied. This portal is restricted to medical providers."
+            detail="Access denied."
         )
 
     try:
-        # 🔍 1. Fetch this doctor's specific specialty profile from the database
-        # Uses the doctor_id foreign key linked to the User account
-        doc_profile_query = select(Doctor).where(Doctor.id == current_user.doctor_id)
-        doc_profile_result = await db.execute(doc_profile_query)
-        doctor_profile = doc_profile_result.scalar_one_or_none() #
-        doctor_profile = doc_profile_result.scalar().one_or_none()
+        # 🔍 1. Safely look up doctor profile if it exists
+        doctor_profile = None
+        if hasattr(current_user, 'doctor_id') and current_user.doctor_id:
+            doc_profile_query = select(Doctor).where(Doctor.id == current_user.doctor_id)
+            doc_profile_result = await db.execute(doc_profile_query)
+            doctor_profile = doc_profile_result.scalar_one_or_none()
 
-        # Fallback specialization profile if no standalone doctor table record is attached yet
-        specialty = doctor_profile.specialization if doctor_profile else "General Physician"
+        specialty = doctor_profile.specialization if doctor_profile else None
+        print(f"🔍 DEBUG: Active Logged-In Doctor Specialty: '{specialty}'")
 
-        # 📥 2. Pull all patient triage records from the Diagnosis table
+        # 📥 2. Pull recent triage logs from the Diagnosis table
         result = await db.execute(
             select(Diagnosis).order_by(Diagnosis.created_at.desc()).limit(20)
         )
         all_diagnoses = result.scalars().all()
+        print(f"🔍 DEBUG: Found {len(all_diagnoses)} total diagnosis logs in the Neon Database.")
 
-        # 🎯 3. Filter the queue down to cases matching this doctor's exact specialty
+        # 🎯 3. Build the queue with a smart developer fallback
         active_queue = []
         for diag in all_diagnoses:
             ai_data = diag.ai_analysis or {}
-            analysis_block = ai_data.get("analysis", {})
+            # Handle both flat and nested AI JSON blocks safely
+            analysis_block = ai_data.get("analysis", ai_data) 
             target_specialty = analysis_block.get("recommended_specialization", "")
+            
+            print(f"📋 Checking DB Case #{diag.id} - AI asked for: '{target_specialty}'")
 
-            # If the case matches the doctor's field, clean it up for the frontend UI
-            if specialty.lower() in target_specialty.lower() or target_specialty.lower() in specialty.lower():
+            # 🛠️ DEV FALLBACK: If the doctor has no specialty set yet, show ALL cases.
+            # Otherwise, only filter if a explicit match is confirmed.
+            if not specialty or specialty.lower() in target_specialty.lower() or target_specialty.lower() in specialty.lower():
                 active_queue.append({
                     "id": diag.id,
                     "patient_id": diag.user_id,
                     "transcript": diag.transcript,
                     "urgency_level": analysis_block.get("urgency_level", "Low"),
                     "recommended_action": analysis_block.get("recommended_action", "Monitor symptoms."),
-                    "created_at": diag.created_at
+                    "created_at": diag.created_at.isoformat() if diag.created_at else None
                 })
 
         return active_queue
 
     except Exception as e:
+        print(f"🚨 Backend Queue Exception Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

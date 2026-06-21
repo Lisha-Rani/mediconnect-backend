@@ -16,3 +16,4 @@ async def async_client():
     """
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         yield client
+#uvicorn app.main:app --reload --port 8001

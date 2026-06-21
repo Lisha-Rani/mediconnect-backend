@@ -1,11 +1,16 @@
 import json
 import base64
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 from typing import Dict, List
+
+from app.api.dependencies import get_db # Adjust based on your DB dependency path
+from app.db.session import async_session_maker # Used to generate isolated database transactions inside loops
+from app.db.models import ChatMessage
 
 router = APIRouter(prefix="/chat", tags=["Real-Time Consultation Hub"])
 
-# 🌐 THE IN-MEMORY SWITCHBOARD
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[str, List[WebSocket]] = {}
@@ -28,19 +33,34 @@ class ConnectionManager:
                     try:
                         await connection.send_text(json.dumps(message))
                     except Exception:
-                        pass # Prevents single socket drops from breaking the router loop
+                        pass
 
 manager = ConnectionManager()
 
-# ⚡ THE DUAL-STREAM WEBSOCKET ROUTER
+# 📥 NEW: HTTP GET Route to reload past history records on mount
+@router.get("/history/{room_id}")
+async def get_chat_history(room_id: str, db: AsyncSession = Depends(get_db)):
+    try:
+        result = await db.execute(
+            select(ChatMessage)
+            .where(ChatMessage.room_id == room_id)
+            .order_by(ChatMessage.created_at.asc())
+        )
+        history = result.scalars().all()
+        return [
+            {
+                "sender": msg.sender,
+                "text": msg.message,
+                "timestamp": msg.created_at.strftime("%I:%M %p") if msg.created_at else ""
+            }
+            for msg in history
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ⚡ WebSocket Pipeline with Auto-Persistence Engine
 @router.websocket("/ws/{room_id}")
-async def websocket_endpoint(
-    websocket: WebSocket,
-    room_id: str,
-    token: str = Query(None)
-):
-    # 🔑 FIX 1: Accept the handshake immediately! 
-    # This prevents the browser from throwing a generic, unhelpful '{}' pipeline error.
+async def websocket_endpoint(websocket: WebSocket, room_id: str, token: str = Query(None)):
     await websocket.accept()
 
     if not token:
@@ -48,37 +68,42 @@ async def websocket_endpoint(
         return
         
     try:
-        # 🔑 FIX 2: Safe, foolproof parsing of the JWT payload chunk
-        # This extracts user context instantly without failing on strict signature/environment keys
         base64_url = token.split('.')[1]
         padding = '=' * (4 - len(base64_url) % 4)
-        payload_json = base64.b64decode(base64_url + padding).decode('utf-8')
-        payload = json.loads(payload_json)
-        
+        payload = json.loads(base64.b64decode(base64_url + padding).decode('utf-8'))
         user_id = payload.get("sub")
         if not user_id:
             await websocket.close(code=4002)
             return
-    except Exception as e:
-        print(f"🚨 WebSocket Token Parsing Error: {e}")
+    except Exception:
         await websocket.close(code=4003)
         return
 
-    # Step 3: Register the verified connection into the active pool
     await manager.connect(room_id, websocket)
     
     try:
         while True:
-            # Continuously listen for incoming client message transmissions
             raw_data = await websocket.receive_text()
             data = json.loads(raw_data)
             
-            payload = {
-                "message": data.get("message"),
-                "sender": data.get("sender", "patient")
-            }
+            sender_role = data.get("sender", "patient")
+            message_text = data.get("message", "")
+
+            # 💾 PERSIST TO NEON POSTGRESQL: Commit message to database asynchronously
+            async with async_session_maker() as db_session:
+                new_msg = ChatMessage(
+                    room_id=room_id,
+                    sender=sender_role,
+                    message=message_text
+                )
+                db_session.add(new_msg)
+                await db_session.commit()
             
-            # Distribute message directly to the other room participant
+            # Broadcast out to other room client
+            payload = {
+                "message": message_text,
+                "sender": sender_role
+            }
             await manager.broadcast_to_room(room_id, payload, sender_socket=websocket)
             
     except WebSocketDisconnect:
