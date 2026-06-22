@@ -1,16 +1,8 @@
 import enum
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, JSON, UUID
-from sqlalchemy.sql import func
-from sqlalchemy.orm import relationship
-from pgvector.sqlalchemy import Vector # 🧠 🔄 Added for pgvector RAG support!
-from app.db.session import Base
-
-# 🔑 1. ROLE DEFINITION ENUM
-import enum
-# 🔄 Added Boolean to the SQLAlchemy imports list
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, JSON, UUID, Boolean
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
+from pgvector.sqlalchemy import Vector
 from app.db.session import Base
 
 # 🔑 1. ROLE DEFINITION ENUM
@@ -28,15 +20,11 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     role = Column(String, default=RoleEnum.PATIENT.value)
     doctor_id = Column(Integer, ForeignKey("doctors.id"), nullable=True)
-    
-    # 🔄 FIX: Added these two structural columns to satisfy your UserResponse validation schema!
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Relationships
     doctor_profile = relationship("Doctor", back_populates="user_accounts")
-
-# ... Leave all your other models (Doctor, Appointment, VisitRecord, etc.) exactly as they are below ...
 
 
 # 🩺 3. MEDICAL PROVIDER PROFILE MODEL
@@ -46,7 +34,9 @@ class Doctor(Base):
     id = Column(Integer, primary_key=True, index=True)
     first_name = Column(String, nullable=False)
     last_name = Column(String, nullable=False)
-    email = Column(String, unique=True, index=True, nullable=False)
+    email = Column(String, unique=True, index=True, nullable=False) 
+    registration_number = Column(String, unique=True, index=True, nullable=False)
+    password_hash = Column(String, nullable=True) 
     specialization = Column(String, nullable=False)
     hospital_clinic = Column(String, nullable=False)
     city = Column(String, nullable=False)
@@ -99,10 +89,6 @@ class MedicalKnowledge(Base):
     disease_condition = Column(String, index=True, nullable=False)
     symptoms_summary = Column(Text, nullable=False)
     recommended_specialty = Column(String, nullable=False)
-    
-    # 🔄 FIX: Restored the embedding column for vector similarity search!
-    # Note: 768 dimensions is standard for Gemini text-embedding-004. 
-    # If your project uses OpenAI (text-embedding-ada-002), change this value to 1536!
     embedding = Column(Vector(384), nullable=True) 
 
 

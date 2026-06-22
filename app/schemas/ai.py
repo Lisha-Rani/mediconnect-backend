@@ -16,13 +16,13 @@ class VoiceAnalysisResponse(BaseModel):
 class DoctorCreate(BaseModel):
     first_name: str
     last_name: str
-    email: EmailStr
-    password: str
-    registration_number: str
+    email: str                # 🔄 FIX: Make sure this is strictly required (no default = None)
+    registration_number: str  # 🔄 FIX: Make sure this is strictly required (no default = None)
     specialization: str
     hospital_clinic: str
     city: str
     consultation_fee: int
+    password:str
 
 class DoctorResponse(BaseModel):
     id: int

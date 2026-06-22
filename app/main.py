@@ -1,63 +1,40 @@
-from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.core.config import settings
-from app.api.endpoints import ai, auth, appointments, visits, chat
+from contextlib import asynccontextmanager
 from sqlalchemy import text
-# 🔄 DB Lifecycle Imports
-from app.db.session import engine
-from app.db.models import Base
 
-# 🌐 THE STARTUP LIFESPAN MANAGER
-# 🌐 THE STARTUP LIFESPAN MANAGER
+from app.core.config import settings
+from app.db.session import engine, Base
+# 🔄 FIX: Import the chat router node explicitly
+from app.api.endpoints import auth, ai, appointments, ai_chat 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
-        # 🛡️ SAFE ALTERATION: Injects the missing columns into the existing Neon table structure
-        # If the columns already exist, PostgreSQL ignores this safely without throwing errors.
         await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;"))
         await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();"))
-        
-        # Verify and sync the remaining structural models 
+        await conn.execute(text("ALTER TABLE doctors ADD COLUMN IF NOT EXISTS registration_number VARCHAR;"))
+        await conn.execute(text("ALTER TABLE doctors ADD COLUMN IF NOT EXISTS password_hash VARCHAR;"))
         await conn.run_sync(Base.metadata.create_all)
-        
     print("🚀 Neon Cloud Database Schema Sync Complete. All columns verified active!")
     yield
-# Initialize the FastAPI app with the life-cycle manager attached
-app = FastAPI(
-    title=settings.PROJECT_NAME,
-    version="0.1.0",
-    description="Backend API for MediAI Healthcare Management Platform",
-    lifespan=lifespan 
-)
-# Initialize the FastAPI app with the life-cycle manager attached
 
-# Configure Cross-Origin Resource Sharing (CORS)
+app = FastAPI(title="MediAI Backend Engine", version="1.0.0", lifespan=lifespan)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 🎛️ REGISTER APPLICATION ROUTERS (Preserving your exact prefix paths)
-app.include_router(ai.router, prefix="/api/v1")
+# Connect Endpoint Route Trees
 app.include_router(auth.router, prefix="/api/v1/auth")
-app.include_router(appointments.router, prefix="/api/v1")
-app.include_router(visits.router, prefix="/api/v1")
-app.include_router(chat.router, prefix="/api/v1")
-
-# --- SYSTEM UTILITY ROUTES ---
+app.include_router(ai.router, prefix="/api/v1")
+# 🔄 FIX: Mount the chat router structure into your API space
+app.include_router(ai_chat.router, prefix="/api/v1") 
 
 @app.get("/")
-async def root():
-    return {
-        "status": "online",
-        "project": settings.PROJECT_NAME,
-        "environment": settings.ENVIRONMENT
-    }
-
-@app.get("/health")
-async def health_check():
-    return {"message": "MediAI Systems fully operational"}
+def read_root():
+    return {"status": "online", "engine": "MediAI Core Async Systems"}
