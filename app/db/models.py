@@ -22,7 +22,8 @@ class User(Base):
     doctor_id = Column(Integer, ForeignKey("doctors.id"), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-
+    first_name = Column(String, nullable=True, default="Anonymous")
+    last_name = Column(String, nullable=True, default="Patient")
     # Relationships
     doctor_profile = relationship("Doctor", back_populates="user_accounts")
 

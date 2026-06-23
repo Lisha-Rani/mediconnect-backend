@@ -1,4 +1,5 @@
 import json
+import uuid
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -14,11 +15,9 @@ router = APIRouter(prefix="/chat", tags=["Real-time Chat Engine"])
 # --- REAL-TIME CONNECTION MANAGER Matrix ---
 class ConnectionManager:
     def __init__(self):
-        # Maps room_id -> list of active WebSocket links
         self.active_rooms: dict[str, list[WebSocket]] = {}
 
     async def connect(self, websocket: WebSocket, room_id: str):
-        await websocket.accept()
         if room_id not in self.active_rooms:
             self.active_rooms[room_id] = []
         self.active_rooms[room_id].append(websocket)
@@ -41,29 +40,9 @@ class ConnectionManager:
                 try:
                     await connection.send_json(message)
                 except Exception:
-                    # Catch stale closed links safely
                     pass
 
 manager = ConnectionManager()
-
-
-# 🛡️ WEB SOCKET QUERY TOKEN AUTHENTICATOR
-async def get_websocket_user(token: str, db: AsyncSession) -> User:
-    """Decodes security payloads pulled directly from URL parameters."""
-    try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        user_id: str = payload.get("sub")
-        if user_id is None:
-            raise ValueError("Missing subject code identifier")
-            
-        result = await db.execute(select(User).where(User.id == user_id))
-        user = result.scalars().first()
-        if user is None:
-            raise ValueError("Identity record missing")
-        return user
-    except (JWTError, ValueError) as e:
-        print(f"🔒 WebSocket Credentials Rejected: {str(e)}")
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid session token.")
 
 
 # --- ENDPOINTS ---
@@ -76,19 +55,21 @@ async def get_chat_history(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Resolves the 404 error by returning past conversations for a room."""
     try:
+        clean_room_id = room_id.strip().replace("[", "").replace("]", "")
+        
         result = await db.execute(
             select(ChatMessage)
-            .where(ChatMessage.room_id == room_id)
+            .where(ChatMessage.room_id == clean_room_id)
             .order_by(ChatMessage.created_at.asc())
         )
         messages = result.scalars().all()
+        
         return [
             {
                 "id": msg.id,
                 "room_id": msg.room_id,
-                "sender": msg.sender,
+                "sender": msg.sender,  # "Doctor" or "Patient" for stable style checks
                 "message": msg.message,
                 "created_at": msg.created_at.isoformat() if msg.created_at else None
             }
@@ -106,58 +87,51 @@ async def websocket_chat_endpoint(
     token: str | None = None,
     db: AsyncSession = Depends(get_db)
 ):
-    """Processes message streaming through parameterized authentication tokens safely."""
-    # 🔄 FIX 1: Open the handshake link instantly! 
-    # This prevents the browser engine from throwing unhandled pipeline crashes into ws.onerror
+    # Establish connection handshake immediately
     await websocket.accept()
 
-    # Capture token directly from request query parameters
     if not token:
         token = websocket.query_params.get("token")
 
     if not token:
-        print("🔒 Connection dropped: No token parameter detected in query string.")
         await websocket.send_json({"error": "Missing authentication token criteria."})
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
     try:
-        # Decode and verify session token signature
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         user_id = payload.get("sub")
-        
         if not user_id:
-            raise ValueError("Token missing user subject indicator credentials.")
+            raise ValueError("Token missing subject payload properties.")
 
-        # 🔄 FIX 2: Explicitly parse the plain string user_id into a native Python UUID object
-        # This matches your database schema comparison perfectly and avoids compilation drops!
-        import uuid
+        # Cast string user ID to native Python UUID safely
         try:
             db_uuid = uuid.UUID(str(user_id).strip())
         except ValueError:
-            raise ValueError("Token data string is not an authenticated system UUID layout.")
+            raise ValueError("Token identifier format mismatch.")
 
-        # Query the database using the clean native UUID object
         result = await db.execute(select(User).where(User.id == db_uuid))
         user = result.scalars().first()
-        
         if user is None:
-            raise ValueError("Session token profile mismatch. Record no longer exists in tables.")
+            raise ValueError("Authenticated identity profile not found.")
 
     except Exception as e:
         print(f"🔒 WebSocket Credentials Rejected: {str(e)}")
-        # Send a readable structured JSON error notification back to your browser tab before exit
         await websocket.send_json({"error": f"Authentication validation failed: {str(e)}"})
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
-    # Add authenticated client to our active global room matrix
-    if room_id not in manager.active_rooms:
-        manager.active_rooms[room_id] = []
-    manager.active_rooms[room_id].append(websocket)
-    print(f"🔌 WebSocket joined room: [{room_id}]. Total members: {len(manager.active_rooms[room_id])}")
-
-    sender_name = "Doctor" if user.role.upper() == "DOCTOR" else "Patient"
+    # Join the active memory matrix room pool
+    await manager.connect(websocket, room_id)
+    
+    # Compile safe role tracking identifiers for frontend styling engines
+    layout_role = "Doctor" if user.role.upper() == "DOCTOR" else "Patient"
+    
+    # 🔄 FIX: Dynamically generate real text display names using your schema updates
+    if user.role.upper() == "DOCTOR":
+        display_name = f"Dr. {user.first_name or 'Medical'} {user.last_name or 'Specialist'}".strip()
+    else:
+        display_name = f"{user.first_name or 'Anonymous'} {user.last_name or 'Patient'}".strip()
 
     try:
         while True:
@@ -171,18 +145,19 @@ async def websocket_chat_endpoint(
             if not text_content:
                 continue
 
-            # Commit new message records seamlessly to Neon PostgreSQL
+            # Save historical logs using layout roles for unbroken backward mapping
             db_msg = ChatMessage(
                 room_id=room_id,
-                sender=sender_name,
+                sender=layout_role,
                 message=text_content
             )
             db.add(db_msg)
             await db.commit()
 
-            # Broadcast outgoing message packets out to every open stream inside the room
+            # 🔄 FIX: Broadcast packet includes structural roles AND real names explicitly
             broadcast_payload = {
-                "sender": sender_name,
+                "sender": layout_role,         # Keeps bubble positioning safe
+                "sender_name": display_name,   # Real name text display reference
                 "message": text_content,
                 "user_id": str(user.id)
             }

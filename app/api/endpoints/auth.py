@@ -1,4 +1,4 @@
-import uuid  # 🔄 Added to generate clean UUID strings for user accounts
+import uuid  # 🔄 Generates clean UUID strings for user accounts safely
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -13,7 +13,6 @@ from app.schemas.ai import DoctorCreate, DoctorResponse
 router = APIRouter()
 
 # 👤 1. STANDARD PATIENT REGISTRATION
-# 👤 STANDARD PATIENT REGISTRATION
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     
@@ -27,8 +26,7 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     # 2. Hash password
     hashed_password = get_password_hash(user_data.password)
     
-    # 🔄 FIX: Normalize the incoming role format so it perfectly matches the Pydantic constraints
-    # If the frontend sends "PATIENT", "patient", or "Patient", it converts it cleanly to "patient"
+    # Normalize incoming role strings matching enum schemas
     assigned_role = RoleEnum.DOCTOR.value if "doctor" in user_data.role.lower() else RoleEnum.PATIENT.value
     
     # 3. Save new user with structural fields included
@@ -36,7 +34,10 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
         id=str(uuid.uuid4()),
         email=user_data.email,
         hashed_password=hashed_password,
-        role=assigned_role,  # 🔄 Uses the cleanly matched role string
+        # 🔄 FIX: Reference incoming data payload and map both first and last names cleanly
+        first_name=user_data.first_name.strip() if user_data.first_name else "Anonymous",
+        last_name=user_data.last_name.strip() if user_data.last_name else "Patient",
+        role=assigned_role,  
         is_active=True
     )
     
@@ -45,6 +46,7 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     await db.refresh(new_user)
     
     return new_user
+
 
 # 🔑 2. SECURE USER LOGIN GATEWAY
 @router.post("/login", response_model=Token)
@@ -61,7 +63,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSessi
             headers={"WWW-Authenticate": "Bearer"},
         )
         
-    # 🔄 FIX: Generate the JWT Token safely without trying to call .value on a plain string column!
+    # Generate the JWT Token safely without trying to call .value on a plain string column!
     access_token = create_access_token(
         data={
             "sub": str(user.id), 
@@ -72,7 +74,6 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSessi
     return {"access_token": access_token, "token_type": "bearer"}
 
 
-# 🩺 3. SPECIALIZED MEDICAL PROVIDER REGISTRATION
 # 🩺 3. SPECIALIZED MEDICAL PROVIDER REGISTRATION
 @router.post("/register/doctor", response_model=DoctorResponse, status_code=status.HTTP_201_CREATED)
 async def register_doctor(doctor_data: DoctorCreate, db: AsyncSession = Depends(get_db)):
@@ -94,8 +95,8 @@ async def register_doctor(doctor_data: DoctorCreate, db: AsyncSession = Depends(
     new_doctor_profile = Doctor(
         first_name=doctor_data.first_name,
         last_name=doctor_data.last_name,
-        email=doctor_data.email,                            # 🔄 FIX: Added to capture from input payload!
-        registration_number=doctor_data.registration_number,# 🔄 FIX: Added to capture from input payload!
+        email=doctor_data.email,                                
+        registration_number=doctor_data.registration_number,
         specialization=doctor_data.specialization,
         hospital_clinic=doctor_data.hospital_clinic,
         city=doctor_data.city,
@@ -111,7 +112,11 @@ async def register_doctor(doctor_data: DoctorCreate, db: AsyncSession = Depends(
         email=doctor_data.email,
         hashed_password=hashed_password,
         role=RoleEnum.DOCTOR.value,  
-        doctor_id=new_doctor_profile.id  # Links login account to the doctor profile
+        doctor_id=new_doctor_profile.id,  # Links login account to the doctor profile
+        # 🔄 FIX: Sync doctor's names onto their User row for absolute data alignment
+        first_name=doctor_data.first_name,
+        last_name=doctor_data.last_name,
+        is_active=True
     )
     db.add(new_user)
     

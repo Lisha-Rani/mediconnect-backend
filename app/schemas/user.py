@@ -4,10 +4,15 @@ import uuid
 from datetime import datetime
 
 # What the Backend expects (Example):
+from pydantic import BaseModel, EmailStr
+
 class UserCreate(BaseModel):
-    email: str
+    email: EmailStr
     password: str
-    role: str # 'patient' or 'DOCTOR'
+    first_name: str | None = "Anonymous"
+    last_name: str | None = "Patient"
+    # 🔄 FIX: Make role optional with a clean default fallback string string
+    role: str | None = "patient"
 
 class UserResponse(BaseModel):
     id: uuid.UUID
