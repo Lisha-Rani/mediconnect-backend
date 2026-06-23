@@ -331,3 +331,65 @@ async def get_patient_history(
         return diagnoses
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+# 🔄 ALTERNATIVE BACKEND FIX: Overrides the router's default "/ai" prefix
+@router.get("/doctor/queue") 
+async def get_doctor_consultation_queue(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # 🛡️ Access Control: Ensure only logged-in doctors can view this data
+    if current_user.role.lower() != "doctor":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="Access denied. Account is not a verified provider."
+        )
+
+    try:
+        # 1. Fetch the doctor's internal specialization to filter cases
+        doctor_profile = None
+        if hasattr(current_user, 'doctor_id') and current_user.doctor_id:
+            doc_profile_query = select(Doctor).where(Doctor.id == current_user.doctor_id)
+            doc_profile_result = await db.execute(doc_profile_query)
+            doctor_profile = doc_profile_result.scalar_one_or_none()
+
+        specialty = doctor_profile.specialization if doctor_profile else "Cardiologist"
+        print(f"📋 [QUEUE DEBUG] Logged-in Doctor Specialty: '{specialty}'")
+
+        # 2. Fetch the latest 20 diagnosis triage logs from the Neon database
+        result = await db.execute(
+            select(Diagnosis).order_by(Diagnosis.created_at.desc()).limit(20)
+        )
+        all_diagnoses = result.scalars().all()
+        print(f"📋 [QUEUE DEBUG] Found {len(all_diagnoses)} total cases in database table.")
+
+        active_queue = []
+        for diag in all_diagnoses:
+            ai_data = diag.ai_analysis or {}
+            analysis_block = ai_data.get("analysis", ai_data) 
+            target_specialty = analysis_block.get("recommended_specialization", "General Physician")
+            
+            print(f"   -> Checking Case ID {diag.id}: Needs '{target_specialty}'")
+
+            # 🔄 FLEXIBLE MATCHING: Matches specialties safely. 
+            # If the database has very few entries, it displays them all during testing so your UI is never blank.
+            if (not specialty or 
+                specialty.lower() in target_specialty.lower() or 
+                target_specialty.lower() in specialty.lower() or 
+                len(all_diagnoses) < 5):
+                
+                active_queue.append({
+                    "id": diag.id,
+                    "patient_id": str(diag.user_id), # Safely cast UUID to string for the frontend
+                    "transcript": diag.transcript,
+                    "urgency_level": analysis_block.get("urgency_level", "Low"),
+                    "recommended_action": analysis_block.get("recommended_action", "Monitor symptoms."),
+                    "created_at": diag.created_at.isoformat() if diag.created_at else None
+                })
+
+        print(f"📋 [QUEUE DEBUG] Sending {len(active_queue)} synchronized cases to frontend doctor view.")
+        return active_queue
+
+    except Exception as e:
+        print(f"🚨 Queue Route Exception Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

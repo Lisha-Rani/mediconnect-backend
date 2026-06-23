@@ -70,6 +70,7 @@ async def get_websocket_user(token: str, db: AsyncSession) -> User:
 
 # 1. FETCH HISTORICAL CHAT LOGS
 @router.get("/history/{room_id}")
+@router.get("/history/{room_id}/")
 async def get_chat_history(
     room_id: str, 
     db: AsyncSession = Depends(get_db),
@@ -105,30 +106,61 @@ async def websocket_chat_endpoint(
     token: str | None = None,
     db: AsyncSession = Depends(get_db)
 ):
-    """Processes message streaming through parameterized authentication tokens."""
-    # Read the token parameter out of the query string if not parsed by dependencies
+    """Processes message streaming through parameterized authentication tokens safely."""
+    # 🔄 FIX 1: Open the handshake link instantly! 
+    # This prevents the browser engine from throwing unhandled pipeline crashes into ws.onerror
+    await websocket.accept()
+
+    # Capture token directly from request query parameters
     if not token:
         token = websocket.query_params.get("token")
 
     if not token:
         print("🔒 Connection dropped: No token parameter detected in query string.")
+        await websocket.send_json({"error": "Missing authentication token criteria."})
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
     try:
-        # Validate connection credentials securely
-        user = await get_websocket_user(token, db)
-    except Exception:
+        # Decode and verify session token signature
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        user_id = payload.get("sub")
+        
+        if not user_id:
+            raise ValueError("Token missing user subject indicator credentials.")
+
+        # 🔄 FIX 2: Explicitly parse the plain string user_id into a native Python UUID object
+        # This matches your database schema comparison perfectly and avoids compilation drops!
+        import uuid
+        try:
+            db_uuid = uuid.UUID(str(user_id).strip())
+        except ValueError:
+            raise ValueError("Token data string is not an authenticated system UUID layout.")
+
+        # Query the database using the clean native UUID object
+        result = await db.execute(select(User).where(User.id == db_uuid))
+        user = result.scalars().first()
+        
+        if user is None:
+            raise ValueError("Session token profile mismatch. Record no longer exists in tables.")
+
+    except Exception as e:
+        print(f"🔒 WebSocket Credentials Rejected: {str(e)}")
+        # Send a readable structured JSON error notification back to your browser tab before exit
+        await websocket.send_json({"error": f"Authentication validation failed: {str(e)}"})
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
-    # Add authenticated client to room matrix
-    await manager.connect(websocket, room_id)
+    # Add authenticated client to our active global room matrix
+    if room_id not in manager.active_rooms:
+        manager.active_rooms[room_id] = []
+    manager.active_rooms[room_id].append(websocket)
+    print(f"🔌 WebSocket joined room: [{room_id}]. Total members: {len(manager.active_rooms[room_id])}")
+
     sender_name = "Doctor" if user.role.upper() == "DOCTOR" else "Patient"
 
     try:
         while True:
-            # Await incoming message packets from this socket connection
             raw_data = await websocket.receive_text()
             try:
                 data = json.loads(raw_data)
@@ -139,7 +171,7 @@ async def websocket_chat_endpoint(
             if not text_content:
                 continue
 
-            # Commit the chat message transaction log to Neon Postgres
+            # Commit new message records seamlessly to Neon PostgreSQL
             db_msg = ChatMessage(
                 room_id=room_id,
                 sender=sender_name,
@@ -148,7 +180,7 @@ async def websocket_chat_endpoint(
             db.add(db_msg)
             await db.commit()
 
-            # Broadcast message outbound payload packets to everyone connected to the room
+            # Broadcast outgoing message packets out to every open stream inside the room
             broadcast_payload = {
                 "sender": sender_name,
                 "message": text_content,
@@ -157,7 +189,10 @@ async def websocket_chat_endpoint(
             await manager.broadcast_to_room(room_id, broadcast_payload)
 
     except WebSocketDisconnect:
-        manager.disconnect(websocket, room_id)
+        if room_id in manager.active_rooms and websocket in manager.active_rooms[room_id]:
+            manager.active_rooms[room_id].remove(websocket)
+        print(f"❌ WebSocket disconnected from room: [{room_id}]")
     except Exception as e:
         print(f"🚨 WebSocket Room Exception Error: {e}")
-        manager.disconnect(websocket, room_id)
+        if room_id in manager.active_rooms and websocket in manager.active_rooms[room_id]:
+            manager.active_rooms[room_id].remove(websocket)
