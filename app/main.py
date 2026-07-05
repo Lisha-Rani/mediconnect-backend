@@ -5,7 +5,7 @@ from sqlalchemy import text
 
 from app.core.config import settings
 from app.db.session import engine, Base
-# 🔄 FIX: Import the chat router node explicitly
+# 🔄 The endpoints are imported cleanly here
 from app.api.endpoints import auth, ai, appointments, ai_chat 
 
 @asynccontextmanager
@@ -24,6 +24,7 @@ async def lifespan(app: FastAPI):
         
     print("🚀 Neon Cloud Database Schema Sync Complete. Patient Names Activated!")
     yield
+
 app = FastAPI(title="MediAI Backend Engine", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
@@ -34,11 +35,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Connect Endpoint Route Trees
+# =========================================================
+# 📁 CONNECT ENDPOINT ROUTE TREES
+# =========================================================
 app.include_router(auth.router, prefix="/api/v1/auth")
 app.include_router(ai.router, prefix="/api/v1")
-# 🔄 FIX: Mount the chat router structure into your API space
 app.include_router(ai_chat.router, prefix="/api/v1") 
+
+# 🔄 FIX: Mount the appointments router into the /api/v1 tree
+app.include_router(appointments.router, prefix="/api/v1")
 
 @app.get("/")
 def read_root():
