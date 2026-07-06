@@ -70,18 +70,21 @@ async def book_doctor_appointment(
         )
 
     # 4. Save the verified transaction strictly matching your Appointment model definition
+    # 4. Save the verified transaction completely in your newly expanded database layout model columns!
     new_appointment = Appointment(
-        patient_id=current_user.id,        # FIXED: mapped from user_id to patient_id
-        doctor_id=payload.doctor_id,
-        appointment_date=parsed_appointment_date, # FIXED: passed as real datetime
-        status="SCHEDULED"                 # Uses defined model column defaults
-        # Removed missing columns: id, appointment_time, payment_method, amount, payment_status
+    patient_id=current_user.id,
+    doctor_id=payload.doctor_id,
+    appointment_date=parsed_appointment_date,
+    appointment_time=payload.appointment_time,
+    payment_method=method,
+    amount=locked_fee,
+    payment_status=calculated_payment_status,
+    status="SCHEDULED"
     )
     
     db.add(new_appointment)
     await db.commit()
-    await db.refresh(new_appointment) # Fetches generated auto-increment integer ID
-
+    await db.refresh(new_appointment)
     return AppointmentResponse(
         appointment_id=new_appointment.id,
         doctor_name=f"Dr. {doctor.first_name} {doctor.last_name}",
