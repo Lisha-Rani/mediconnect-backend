@@ -91,30 +91,34 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, token: str = Qu
 
     await manager.connect(room_id, websocket)
     
+    # ⚡ INSIDE THE DUAL-STREAM WEBSOCKET ROUTER WITH PERSISTENCE (chat.py)
     try:
         while True:
             raw_data = await websocket.receive_text()
             data = json.loads(raw_data)
             
-            sender_role = data.get("sender", "patient")
+            sender_role = data.get("sender", "patient")  # 'doctor' or 'patient'
             message_text = data.get("message", "")
 
             # Save the message to Neon PostgreSQL database asynchronously
             async with async_session_maker() as db_session:
                 new_msg = ChatMessage(
-                    room_id=room_id,
+                    room_id=room_id,   # This MUST be the patient's user UUID string for uniformity
                     sender=sender_role,
                     message=message_text
                 )
                 db_session.add(new_msg)
                 await db_session.commit()
             
-            # Broadcast the payload out to other room participant
+            # Broadcast the payload out to the other room participant
             payload = {
                 "message": message_text,
-                "sender": sender_role
+                "sender": sender_role,
+                "room_id": room_id
             }
             await manager.broadcast_to_room(room_id, payload, sender_socket=websocket)
             
     except WebSocketDisconnect:
         manager.disconnect(room_id, websocket)
+            
+    
