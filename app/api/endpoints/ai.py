@@ -332,7 +332,8 @@ async def get_patient_history(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
-# 🔄 ALTERNATIVE BACKEND FIX: Overrides the router's default "/ai" prefix
+
+# 🔄 DEDUPLICATED BACKEND FIX: Combines matching rules while grouping duplicate user entries
 @router.get("/doctor/queue") 
 async def get_doctor_consultation_queue(
     db: AsyncSession = Depends(get_db),
@@ -350,35 +351,52 @@ async def get_doctor_consultation_queue(
 
         specialty = doctor_profile.specialization if doctor_profile else "Cardiologist"
 
-        result = await db.execute(select(Diagnosis).order_by(Diagnosis.created_at.desc()).limit(20))
+        # Fetch the most recent triage instances first
+        result = await db.execute(select(Diagnosis).order_by(Diagnosis.created_at.desc()))
         all_diagnoses = result.scalars().all()
 
         active_queue = []
+        seen_patients = set()  # 💡 TRACKS UNIQUE USERS TO ELIMINATE UI DUPLICATES
+
         for diag in all_diagnoses:
+            if not diag.user_id:
+                continue
+                
+            # Skip processing if we've already grabbed this patient's most recent interaction record
+            if diag.user_id in seen_patients:
+                continue
+
             ai_data = diag.ai_analysis or {}
             analysis_block = ai_data.get("analysis", ai_data) 
             target_specialty = analysis_block.get("recommended_specialization", "General Physician")
             
-            # 🔄 FIX: Query the patient user account row to resolve their name details dynamically
+            # Query the patient user account row to resolve their name details dynamically
             patient_name = "Anonymous Patient"
-            if diag.user_id:
-                p_result = await db.execute(select(User).where(User.id == diag.user_id))
-                patient_user = p_result.scalars().first()
-                if patient_user and (patient_user.first_name or patient_user.last_name):
-                    patient_name = f"{patient_user.first_name} {patient_user.last_name}".strip()
+            p_result = await db.execute(select(User).where(User.id == diag.user_id))
+            patient_user = p_result.scalars().first()
+            if patient_user and (patient_user.first_name or patient_user.last_name):
+                patient_name = f"{patient_user.first_name} {patient_user.last_name}".strip()
 
+            # Filter logic matching the doctor's specialty requirements
             if (not specialty or specialty.lower() in target_specialty.lower() or 
-                target_specialty.lower() in specialty.lower() or len(all_diagnoses) < 5):
+                target_specialty.lower() in specialty.lower() or len(active_queue) < 5):
+                
+                # Mark patient as handled so older rows are skipped
+                seen_patients.add(diag.user_id)
                 
                 active_queue.append({
                     "id": diag.id,
                     "patient_id": str(diag.user_id),
-                    "patient_name": patient_name, # 🔄 Sent securely to frontend dashboard array
+                    "patient_name": patient_name, 
                     "transcript": diag.transcript,
                     "urgency_level": analysis_block.get("urgency_level", "Low"),
                     "recommended_action": analysis_block.get("recommended_action", "Monitor symptoms."),
                     "created_at": diag.created_at.isoformat() if diag.created_at else None
                 })
+
+            # Soft protection limit for dashboard workspace presentation sizing
+            if len(active_queue) >= 20:
+                break
 
         return active_queue
     except Exception as e:
