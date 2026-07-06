@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from typing import Dict, List
 
-# 🔄 FIX: Import get_db and async_session_maker straight from your verified session.py file!
+# Verified imports straight from your session and models infrastructure
 from app.db.session import async_session_maker, get_db 
 from app.db.models import ChatMessage
 
@@ -55,13 +55,14 @@ async def get_chat_history(room_id: str, db: AsyncSession = Depends(get_db)):
         return [
             {
                 "sender": msg.sender,
-                "text": msg.message,
+                "message": msg.message, # 💡 Matches 'msg.message' mapping in frontend history parser loop
+                "text": msg.message,    # Fallback safety key mapping
+                "created_at": msg.created_at.isoformat() if msg.created_at else None,
                 "timestamp": msg.created_at.strftime("%I:%M %p") if msg.created_at else ""
             }
             for msg in history
         ]
     except Exception as e:
-        # 🚨 CRITICAL LOGGER: This prints the exact database issue directly to your terminal screen!
         print("\n" + "="*60)
         print(f"🚨 DATABASE HISTORY CRASH DETECTED:")
         print(f"Error Details: {str(e)}")
@@ -91,7 +92,6 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, token: str = Qu
 
     await manager.connect(room_id, websocket)
     
-    # ⚡ INSIDE THE DUAL-STREAM WEBSOCKET ROUTER WITH PERSISTENCE (chat.py)
     try:
         while True:
             raw_data = await websocket.receive_text()
@@ -100,17 +100,20 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, token: str = Qu
             sender_role = data.get("sender", "patient")  # 'doctor' or 'patient'
             message_text = data.get("message", "")
 
+            if not message_text.strip():
+                continue
+
             # Save the message to Neon PostgreSQL database asynchronously
             async with async_session_maker() as db_session:
                 new_msg = ChatMessage(
-                    room_id=room_id,   # This MUST be the patient's user UUID string for uniformity
+                    room_id=room_id,   # This is uniformly the patient's user UUID string
                     sender=sender_role,
                     message=message_text
                 )
                 db_session.add(new_msg)
                 await db_session.commit()
             
-            # Broadcast the payload out to the other room participant
+            # Broadcast payload to other room participant
             payload = {
                 "message": message_text,
                 "sender": sender_role,
@@ -120,5 +123,3 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, token: str = Qu
             
     except WebSocketDisconnect:
         manager.disconnect(room_id, websocket)
-            
-    
