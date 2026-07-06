@@ -40,6 +40,7 @@ class DoctorSchema(BaseModel):
     id: int
     first_name: str
     last_name: str
+    doctor_name: str  # 🔄 FIX: Unified naming fallback bridge
     specialization: str
     hospital_clinic: str
     city: str
@@ -47,8 +48,6 @@ class DoctorSchema(BaseModel):
     match_score: int  
     match_reasons: list[str]  
     consultation_fee: int
-    class Config:
-        from_attributes = True
 
 class FinalTriageResponse(BaseModel):
     analysis: SymptomAnalysis
@@ -270,6 +269,7 @@ async def process_medical_triage(
                 "id": doc.id,
                 "first_name": doc.first_name,
                 "last_name": doc.last_name,
+                "doctor_name": f"Dr. {doc.first_name} {doc.last_name}".strip(),
                 "specialization": doc.specialization,
                 "hospital_clinic": doc.hospital_clinic,
                 "city": doc.city or "Unknown",
