@@ -55,6 +55,13 @@ class Appointment(Base):
     patient_id = Column(UUID, ForeignKey("users.id"), nullable=False)
     doctor_id = Column(Integer, ForeignKey("doctors.id"), nullable=False)
     appointment_date = Column(DateTime, nullable=False)
+    
+    # ➕ ADD THESE FOUR MISSING COLUMNS BELOW:
+    appointment_time = Column(String, nullable=True)  # Holds format like "10:30 AM"
+    payment_method = Column(String, nullable=True)    # Holds "MOCK_ONLINE" / "PAY_AT_CLINIC"
+    amount = Column(Integer, default=0)               # Saves the consultation cost fee
+    payment_status = Column(String, default="PENDING")# Track "PENDING" or "COMPLETED"
+    
     status = Column(String, default="scheduled")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
