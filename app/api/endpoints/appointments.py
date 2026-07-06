@@ -17,7 +17,6 @@ class AppointmentCreate(BaseModel):
     appointment_date: str = Field(description="Format: YYYY-MM-DD")
     appointment_time: str = Field(description="Format: 10:30 AM")
     payment_method: str = Field(description="Must be exactly: MOCK_ONLINE or PAY_AT_CLINIC")
-    
 
 class AppointmentResponse(BaseModel):
     appointment_id: int  
@@ -43,7 +42,7 @@ async def book_doctor_appointment(
     if not doctor:
         raise HTTPException(status_code=404, detail="The requested medical practitioner does not exist.")
 
-    # 2. Enforce structural validation (Simulated inside application layer memory space instead of the DB columns)
+    # 2. Enforce validation (Handled safely in app memory to avoid PostgreSQL column mismatch errors)
     method = payload.payment_method.upper().strip()
     if method not in ["MOCK_ONLINE", "PAY_AT_CLINIC"]:
         raise HTTPException(status_code=400, detail="Invalid payment scheme. Choose MOCK_ONLINE or PAY_AT_CLINIC.")
@@ -58,7 +57,7 @@ async def book_doctor_appointment(
         print(f"[COD BOOKING] Registered ₹{locked_fee} balance to be paid at the clinic facility.")
         calculated_payment_status = "PENDING"
 
-    # 3. Parse incoming date string into an actual Python datetime object for SQLAlchemy
+    # 3. Parse date string safely into a native datetime object
     try:
         combined_datetime_str = f"{payload.appointment_date} {payload.appointment_time}"
         parsed_appointment_date = datetime.strptime(combined_datetime_str, "%Y-%m-%d %I:%M %p")
@@ -68,45 +67,43 @@ async def book_doctor_appointment(
             detail="Invalid date or time structure. Use YYYY-MM-DD and HH:MM AM/PM formats."
         )
 
-    # 4. Save transaction TARGETING ONLY the explicit baseline columns present inside your models.py
+    # 4. Save transaction using explicit baseline model layout parameters
     new_appointment = Appointment(
         patient_id=current_user.id,
         doctor_id=payload.doctor_id,
         appointment_date=parsed_appointment_date,
         status="SCHEDULED"
-        # Removed unmapped properties entirely: appointment_time, payment_method, amount, payment_status
     )
     
     db.add(new_appointment)
     await db.commit()
     await db.refresh(new_appointment)
     
-    # 5. Build response mapping passing data in cleanly so the frontend gets what it wants
+    # 5. Return complete schema block back to Next.js
     return AppointmentResponse(
         appointment_id=new_appointment.id,
         doctor_name=f"Dr. {doctor.first_name} {doctor.last_name}",
         specialization=doctor.specialization,
         appointment_date=payload.appointment_date,
         appointment_time=payload.appointment_time, 
-        payment_method=method,                     # Mock value returned
-        amount=float(locked_fee),                  # Mock value returned
-        payment_status=calculated_payment_status,  # Mock value returned
+        payment_method=method,                     
+        amount=float(locked_fee),                  
+        payment_status=calculated_payment_status,  
         booking_status=new_appointment.status
     )
-# ➕ Add this helper inside your backend appointments.py router file
+
+# --- THE LISTING ENDPOINT ---
 @router.get("/list", response_model=list)
 async def get_all_doctor_appointments(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # Fetch rows where the person matched is an active stakeholder
     query = select(Appointment).order_by(Appointment.appointment_date.asc())
     result = await db.execute(query)
     appointments_list = result.scalars().all()
     
     formatted = []
     for appt in appointments_list:
-        # Dynamic lookup block to resolve patient names safely
         p_res = await db.execute(select(User).where(User.id == appt.patient_id))
         patient = p_res.scalars().first()
         p_name = f"{patient.first_name} {patient.last_name}" if patient else "Verified Case"
