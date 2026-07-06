@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.db.session import get_db
-from app.db.models import Appointment, Doctor, User
+from app.db.models import Appointment, Doctor, User,Diagnosis
 from app.api.dependencies import get_current_user
 
 router = APIRouter(prefix="/appointments", tags=["Doctor Appointments"])
@@ -42,40 +42,30 @@ async def book_doctor_appointment(
     if not doctor:
         raise HTTPException(status_code=404, detail="The requested medical practitioner does not exist.")
 
-    # 2. Enforce validation (Handled safely in app memory to avoid PostgreSQL column mismatch errors)
-    method = payload.payment_method.upper().strip()
-    if method not in ["MOCK_ONLINE", "PAY_AT_CLINIC"]:
-        raise HTTPException(status_code=400, detail="Invalid payment scheme. Choose MOCK_ONLINE or PAY_AT_CLINIC.")
-
-    locked_fee = doctor.consultation_fee
-    calculated_payment_status = "PENDING"
-    
-    if method == "MOCK_ONLINE":
-        print(f"[MOCK PAYMENT SUCCESS] Processed automated checkout of ₹{locked_fee} for User ID {current_user.id}")
-        calculated_payment_status = "COMPLETED"
-    elif method == "PAY_AT_CLINIC":
-        print(f"[COD BOOKING] Registered ₹{locked_fee} balance to be paid at the clinic facility.")
-        calculated_payment_status = "PENDING"
-
-    # 3. Parse date string safely into a native datetime object
+    # 2. Parse date string safely into a native datetime object
     try:
         combined_datetime_str = f"{payload.appointment_date} {payload.appointment_time}"
         parsed_appointment_date = datetime.strptime(combined_datetime_str, "%Y-%m-%d %I:%M %p")
     except ValueError:
-        raise HTTPException(
-            status_code=400, 
-            detail="Invalid date or time structure. Use YYYY-MM-DD and HH:MM AM/PM formats."
-        )
+        raise HTTPException(status_code=400, detail="Invalid date or time structure.")
 
-    # 4. Save transaction using explicit baseline model layout parameters
+    # 3. Save transaction using explicit baseline model layout parameters
     new_appointment = Appointment(
         patient_id=current_user.id,
         doctor_id=payload.doctor_id,
         appointment_date=parsed_appointment_date,
         status="SCHEDULED"
     )
-    
     db.add(new_appointment)
+    
+    # 🌟 4. THE FIX: Find and clean up this specific patient's active triage queue records!
+    # By changing their database entry data status, they won't reappear in the triage array query.
+    triage_query = await db.execute(select(Diagnosis).where(Diagnosis.user_id == current_user.id))
+    active_triage_records = triage_query.scalars().all()
+    for record in active_triage_records:
+        # If your diagnosis model has a status field, update it; otherwise, delete the temporary triage row
+        await db.delete(record) 
+
     await db.commit()
     await db.refresh(new_appointment)
     
@@ -86,9 +76,9 @@ async def book_doctor_appointment(
         specialization=doctor.specialization,
         appointment_date=payload.appointment_date,
         appointment_time=payload.appointment_time, 
-        payment_method=method,                     
-        amount=float(locked_fee),                  
-        payment_status=calculated_payment_status,  
+        payment_method=payload.payment_method,                     
+        amount=float(doctor.consultation_fee),                  
+        payment_status="PENDING",  
         booking_status=new_appointment.status
     )
 
