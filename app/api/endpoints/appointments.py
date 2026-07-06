@@ -93,3 +93,28 @@ async def book_doctor_appointment(
         payment_status=calculated_payment_status,  # Mock value returned
         booking_status=new_appointment.status
     )
+# ➕ Add this helper inside your backend appointments.py router file
+@router.get("/list", response_model=list)
+async def get_all_doctor_appointments(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Fetch rows where the person matched is an active stakeholder
+    query = select(Appointment).order_by(Appointment.appointment_date.asc())
+    result = await db.execute(query)
+    appointments_list = result.scalars().all()
+    
+    formatted = []
+    for appt in appointments_list:
+        # Dynamic lookup block to resolve patient names safely
+        p_res = await db.execute(select(User).where(User.id == appt.patient_id))
+        patient = p_res.scalars().first()
+        p_name = f"{patient.first_name} {patient.last_name}" if patient else "Verified Case"
+        
+        formatted.append({
+            "time": appt.appointment_date.strftime("%I:%M %p") if appt.appointment_date else "10:00 AM",
+            "name": p_name,
+            "type": "Clinical Consultation",
+            "status": appt.status.upper()
+        })
+    return formatted
