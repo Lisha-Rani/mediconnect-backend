@@ -20,7 +20,7 @@ class AppointmentCreate(BaseModel):
     
 
 class AppointmentResponse(BaseModel):
-    appointment_id: int  # Changed to int to match your model's auto-increment ID
+    appointment_id: int  
     doctor_name: str
     specialization: str
     appointment_date: str
@@ -43,7 +43,7 @@ async def book_doctor_appointment(
     if not doctor:
         raise HTTPException(status_code=404, detail="The requested medical practitioner does not exist.")
 
-    # 2. Enforce strict parameter validation on input methods
+    # 2. Enforce structural validation (Simulated inside application layer memory space instead of the DB columns)
     method = payload.payment_method.upper().strip()
     if method not in ["MOCK_ONLINE", "PAY_AT_CLINIC"]:
         raise HTTPException(status_code=400, detail="Invalid payment scheme. Choose MOCK_ONLINE or PAY_AT_CLINIC.")
@@ -60,7 +60,6 @@ async def book_doctor_appointment(
 
     # 3. Parse incoming date string into an actual Python datetime object for SQLAlchemy
     try:
-        # Combines "YYYY-MM-DD" and "10:30 AM" strings into a single datetime object
         combined_datetime_str = f"{payload.appointment_date} {payload.appointment_time}"
         parsed_appointment_date = datetime.strptime(combined_datetime_str, "%Y-%m-%d %I:%M %p")
     except ValueError:
@@ -69,30 +68,28 @@ async def book_doctor_appointment(
             detail="Invalid date or time structure. Use YYYY-MM-DD and HH:MM AM/PM formats."
         )
 
-    # 4. Save the verified transaction strictly matching your Appointment model definition
-    # 4. Save the verified transaction completely in your newly expanded database layout model columns!
+    # 4. Save transaction TARGETING ONLY the explicit baseline columns present inside your models.py
     new_appointment = Appointment(
-    patient_id=current_user.id,
-    doctor_id=payload.doctor_id,
-    appointment_date=parsed_appointment_date,
-    appointment_time=payload.appointment_time,
-    payment_method=method,
-    amount=locked_fee,
-    payment_status=calculated_payment_status,
-    status="SCHEDULED"
+        patient_id=current_user.id,
+        doctor_id=payload.doctor_id,
+        appointment_date=parsed_appointment_date,
+        status="SCHEDULED"
+        # Removed unmapped properties entirely: appointment_time, payment_method, amount, payment_status
     )
     
     db.add(new_appointment)
     await db.commit()
     await db.refresh(new_appointment)
+    
+    # 5. Build response mapping passing data in cleanly so the frontend gets what it wants
     return AppointmentResponse(
         appointment_id=new_appointment.id,
         doctor_name=f"Dr. {doctor.first_name} {doctor.last_name}",
         specialization=doctor.specialization,
         appointment_date=payload.appointment_date,
-        appointment_time=payload.appointment_time,
-        payment_method=method,
-        amount=float(locked_fee),
-        payment_status=calculated_payment_status,
+        appointment_time=payload.appointment_time, 
+        payment_method=method,                     # Mock value returned
+        amount=float(locked_fee),                  # Mock value returned
+        payment_status=calculated_payment_status,  # Mock value returned
         booking_status=new_appointment.status
     )
