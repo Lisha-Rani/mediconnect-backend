@@ -13,7 +13,7 @@ from sqlalchemy.future import select
 
 from app.core.config import settings
 from app.db.session import get_db
-from app.db.models import Diagnosis, User, MedicalKnowledge, Doctor
+from app.db.models import Diagnosis, User, MedicalKnowledge, Doctor, Appointment
 from app.api.dependencies import get_current_user
 
 router = APIRouter(prefix="/ai", tags=["AI Medical Engine"])
@@ -351,15 +351,24 @@ async def get_doctor_consultation_queue(
 
         specialty = doctor_profile.specialization if doctor_profile else "Cardiologist"
 
+        # 🌟 STATE GUARD: Fetch all patient IDs who already have a confirmed, active appointment
+        appt_query = select(Appointment.patient_id).where(Appointment.status == "SCHEDULED")
+        appt_result = await db.execute(appt_query)
+        booked_patient_ids = set(appt_result.scalars().all())
+
         # Fetch the most recent triage instances first
         result = await db.execute(select(Diagnosis).order_by(Diagnosis.created_at.desc()))
         all_diagnoses = result.scalars().all()
 
         active_queue = []
-        seen_patients = set()  # 💡 TRACKS UNIQUE USERS TO ELIMINATE UI DUPLICATES
+        seen_patients = set()  # Tracks unique users to eliminate UI duplicates
 
         for diag in all_diagnoses:
             if not diag.user_id:
+                continue
+                
+            # 🌟 FIX: If the patient already has a scheduled appointment, instantly filter them out of the queue!
+            if diag.user_id in booked_patient_ids:
                 continue
                 
             # Skip processing if we've already grabbed this patient's most recent interaction record
