@@ -62,6 +62,8 @@ async def book_doctor_appointment(
     # 🌟 4. THE FIX: Target and wipe out the actual Patient's active triage queue records!
     triage_query = await db.execute(select(Diagnosis).where(Diagnosis.user_id == payload.patient_id))
     active_triage_records = triage_query.scalars().all()
+    print(f"➔ [MediAI Debug] Attempting to clear queue for patient_id: {payload.patient_id}")
+    print(f"➔ [MediAI Debug] Number of active triage records found to delete: {len(active_triage_records)}")
     for record in active_triage_records:
         await db.delete(record) 
 
