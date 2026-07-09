@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.db.session import get_db
-from app.db.models import Appointment, Doctor, User,Diagnosis
+from app.db.models import Appointment, Doctor, User, Diagnosis
 from app.api.dependencies import get_current_user
 
 router = APIRouter(prefix="/appointments", tags=["Doctor Appointments"])
@@ -14,6 +14,7 @@ router = APIRouter(prefix="/appointments", tags=["Doctor Appointments"])
 # --- PYDANTIC REQUEST/RESPONSE SCHEMAS ---
 class AppointmentCreate(BaseModel):
     doctor_id: int
+    patient_id: int # 🔄 FIX: Pass the explicit patient ID from the dashboard queue row
     appointment_date: str = Field(description="Format: YYYY-MM-DD")
     appointment_time: str = Field(description="Format: 10:30 AM")
     payment_method: str = Field(description="Must be exactly: MOCK_ONLINE or PAY_AT_CLINIC")
@@ -34,7 +35,7 @@ class AppointmentResponse(BaseModel):
 async def book_doctor_appointment(
     payload: AppointmentCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user) # Used to verify authorization context
 ):
     # 1. Verify that the requested doctor exists
     doc_query = await db.execute(select(Doctor).where(Doctor.id == payload.doctor_id))
@@ -49,21 +50,19 @@ async def book_doctor_appointment(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date or time structure.")
 
-    # 3. Save transaction using explicit baseline model layout parameters
+    # 3. Save transaction using payload.patient_id instead of current_user.id
     new_appointment = Appointment(
-        patient_id=current_user.id,
+        patient_id=payload.patient_id, # 🔄 FIX: Links row to the targeted patient
         doctor_id=payload.doctor_id,
         appointment_date=parsed_appointment_date,
         status="SCHEDULED"
     )
     db.add(new_appointment)
     
-    # 🌟 4. THE FIX: Find and clean up this specific patient's active triage queue records!
-    # By changing their database entry data status, they won't reappear in the triage array query.
-    triage_query = await db.execute(select(Diagnosis).where(Diagnosis.user_id == current_user.id))
+    # 🌟 4. THE FIX: Target and wipe out the actual Patient's active triage queue records!
+    triage_query = await db.execute(select(Diagnosis).where(Diagnosis.user_id == payload.patient_id))
     active_triage_records = triage_query.scalars().all()
     for record in active_triage_records:
-        # If your diagnosis model has a status field, update it; otherwise, delete the temporary triage row
         await db.delete(record) 
 
     await db.commit()
@@ -76,7 +75,7 @@ async def book_doctor_appointment(
         specialization=doctor.specialization,
         appointment_date=payload.appointment_date,
         appointment_time=payload.appointment_time, 
-        payment_method=payload.payment_method,                     
+        payment_method=payload.payment_method,                    
         amount=float(doctor.consultation_fee),                  
         payment_status="PENDING",  
         booking_status=new_appointment.status
