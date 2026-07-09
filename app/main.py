@@ -6,7 +6,7 @@ from sqlalchemy import text
 from app.core.config import settings
 from app.db.session import engine, Base
 # 🔄 The endpoints are imported cleanly here
-from app.api.endpoints import auth, ai, appointments, ai_chat 
+from app.api.endpoints import auth, ai, appointments, ai_chat, doctor, prescriptions
 
 # 🚨 ONLY ONE LIFESPAN BLOCK ALLOWED
 @asynccontextmanager
@@ -54,6 +54,10 @@ app.include_router(auth.router, prefix="/api/v1/auth")
 app.include_router(ai.router, prefix="/api/v1")
 app.include_router(ai_chat.router, prefix="/api/v1") 
 app.include_router(appointments.router, prefix="/api/v1")
+
+# 🌟 FIX: Mounted the remaining routers to unlock profile, patient history, and prescription features!
+app.include_router(doctor.router, prefix="/api/v1")
+app.include_router(prescriptions.router, prefix="/api/v1")
 
 @app.get("/")
 def read_root():
