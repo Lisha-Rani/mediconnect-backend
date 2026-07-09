@@ -5,24 +5,38 @@ from sqlalchemy import text
 
 from app.core.config import settings
 from app.db.session import engine, Base
-# 🔄 The endpoints are imported cleanly here
-from app.api.endpoints import auth, ai, appointments, ai_chat, doctors, prescriptions
 
-# 🚨 ONLY ONE LIFESPAN BLOCK ALLOWED
+# =========================================================
+# 🔄 FIX: DIRECT FILE PATH IMPORTS (Bypasses __init__.py bugs)
+# =========================================================
+from app.api.endpoints.auth import router as auth_router
+from app.api.endpoints.ai import router as ai_router
+from app.api.endpoints.appointments import router as appointments_router
+from app.api.endpoints.ai_chat import router as ai_chat_router
+
+# 🔎 Note: If your server flags either of these two lines below with a "ModuleNotFoundError",
+# it means that specific .py file is either misspelled or missing from your folder!
+try:
+    from app.api.endpoints.doctors import router as doctors_router
+except ModuleNotFoundError:
+    try:
+        from app.api.endpoints.doctor import router as doctors_router
+    except ModuleNotFoundError:
+        doctors_router = None
+
+try:
+    from app.api.endpoints.prescriptions import router as prescriptions_router
+except ModuleNotFoundError:
+    try:
+        from app.api.endpoints.prescription import router as prescriptions_router
+    except ModuleNotFoundError:
+        prescriptions_router = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
-        print("⚠️ Initiating Complete Database Schema Nuke (CASCADE)...")
-        
-        # 1. Clear out the old schema layers completely
-        #await conn.execute(text("DROP SCHEMA public CASCADE;"))
-        #await conn.execute(text("CREATE SCHEMA public;"))
-        
-        # 🚀 FIX: Re-initialize the pgvector extension in your clean public schema frame!
-        #await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
-        
-        print("🌱 Rebuilding fresh, clean table structures starting at ID 1...")
-        # Recreate empty tables fresh from your current SQLAlchemy models
+        print("🌱 Rebuilding clean table structures...")
         await conn.run_sync(Base.metadata.create_all)
 
         # Apply Your Custom Schema Alterations
@@ -34,7 +48,7 @@ async def lifespan(app: FastAPI):
         await conn.execute(text("ALTER TABLE doctors ADD COLUMN IF NOT EXISTS registration_number VARCHAR;"))
         await conn.execute(text("ALTER TABLE doctors ADD COLUMN IF NOT EXISTS password_hash VARCHAR;"))
         
-    print("🚀 Neon Cloud Database hard reset complete! Everything is perfectly clean.")
+    print("🚀 Neon Cloud Database Schema Sync Operational.")
     yield
 
 app = FastAPI(title="MediAI Backend Engine", version="1.0.0", lifespan=lifespan)
@@ -48,16 +62,26 @@ app.add_middleware(
 )
 
 # =========================================================
-# 📁 CONNECT ENDPOINT ROUTE TREES
+# 📁 MOUNT EXPLICIT ROUTER TREES
 # =========================================================
-app.include_router(auth.router, prefix="/api/v1/auth")
-app.include_router(ai.router, prefix="/api/v1")
-app.include_router(ai_chat.router, prefix="/api/v1") 
-app.include_router(appointments.router, prefix="/api/v1")
+app.include_router(auth_router, prefix="/api/v1/auth")
+app.include_router(ai_router, prefix="/api/v1")
+app.include_router(ai_chat_router, prefix="/api/v1") 
+app.include_router(appointments_router, prefix="/api/v1")
 
-# 🌟 FIX: Mounted the remaining routers to unlock profile, patient history, and prescription features!
-app.include_router(doctor.router, prefix="/api/v1")
-app.include_router(prescriptions.router, prefix="/api/v1")
+# Only mount these routers if the files were successfully located on your system
+if doctors_router:
+    app.include_router(doctors_router, prefix="/api/v1")
+    print("➔ [MediAI Core] Successfully mounted Doctor Profile routes.")
+else:
+    print("⚠️ [MediAI Core] Warning: Doctor profile file not found. Skipping mount.")
+
+if prescriptions_router:
+    app.include_router(prescriptions_router, prefix="/api/v1")
+    print("➔ [MediAI Core] Successfully mounted Prescription Archive routes.")
+else:
+    print("⚠️ [MediAI Core] Warning: Prescription file not found. Skipping mount.")
+
 
 @app.get("/")
 def read_root():
