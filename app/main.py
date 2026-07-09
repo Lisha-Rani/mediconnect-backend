@@ -6,31 +6,16 @@ from sqlalchemy import text
 from app.core.config import settings
 from app.db.session import engine, Base
 
-# =========================================================
-# 🔄 FIX: DIRECT FILE PATH IMPORTS (Bypasses __init__.py bugs)
-# =========================================================
+# 📁 Direct Core Router Imports
 from app.api.endpoints.auth import router as auth_router
 from app.api.endpoints.ai import router as ai_router
 from app.api.endpoints.appointments import router as appointments_router
 from app.api.endpoints.ai_chat import router as ai_chat_router
 
-# 🔎 Note: If your server flags either of these two lines below with a "ModuleNotFoundError",
-# it means that specific .py file is either misspelled or missing from your folder!
-try:
-    from app.api.endpoints.doctors import router as doctors_router
-except ModuleNotFoundError:
-    try:
-        from app.api.endpoints.doctor import router as doctors_router
-    except ModuleNotFoundError:
-        doctors_router = None
-
-try:
-    from app.api.endpoints.prescriptions import router as prescriptions_router
-except ModuleNotFoundError:
-    try:
-        from app.api.endpoints.prescription import router as prescriptions_router
-    except ModuleNotFoundError:
-        prescriptions_router = None
+# 🌟 CRITICAL CHANGE: Import directly without try/except protections. 
+# If these files contain broken internal dependencies, your terminal will now show exactly what is broken!
+from app.api.endpoints.doctor import router as doctors_router
+from app.api.endpoints.prescriptions import router as prescriptions_router
 
 
 @asynccontextmanager
@@ -62,25 +47,14 @@ app.add_middleware(
 )
 
 # =========================================================
-# 📁 MOUNT EXPLICIT ROUTER TREES
+# 📁 MOUNT ROUTER TREES TO LIFE (UNIFIED ROUTE MAPPING)
 # =========================================================
 app.include_router(auth_router, prefix="/api/v1/auth")
 app.include_router(ai_router, prefix="/api/v1")
 app.include_router(ai_chat_router, prefix="/api/v1") 
 app.include_router(appointments_router, prefix="/api/v1")
-
-# Only mount these routers if the files were successfully located on your system
-if doctors_router:
-    app.include_router(doctors_router, prefix="/api/v1")
-    print("➔ [MediAI Core] Successfully mounted Doctor Profile routes.")
-else:
-    print("⚠️ [MediAI Core] Warning: Doctor profile file not found. Skipping mount.")
-
-if prescriptions_router:
-    app.include_router(prescriptions_router, prefix="/api/v1")
-    print("➔ [MediAI Core] Successfully mounted Prescription Archive routes.")
-else:
-    print("⚠️ [MediAI Core] Warning: Prescription file not found. Skipping mount.")
+app.include_router(doctors_router, prefix="/api/v1")
+app.include_router(prescriptions_router, prefix="/api/v1")
 
 
 @app.get("/")

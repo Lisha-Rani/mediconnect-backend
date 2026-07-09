@@ -13,6 +13,7 @@ from sqlalchemy.future import select
 
 from app.core.config import settings
 from app.db.session import get_db
+# 🔄 FIX: Ensure Appointment is imported alongside your other models
 from app.db.models import Diagnosis, User, MedicalKnowledge, Doctor, Appointment
 from app.api.dependencies import get_current_user
 
@@ -40,7 +41,7 @@ class DoctorSchema(BaseModel):
     id: int
     first_name: str
     last_name: str
-    doctor_name: str  # 🔄 FIX: Unified naming fallback bridge
+    doctor_name: str  
     specialization: str
     hospital_clinic: str
     city: str
@@ -138,7 +139,6 @@ async def process_medical_triage(
     current_user: User = Depends(get_current_user)
 ):
     try:
-        # --- PHASE 1: THE RETRIEVER (RAG) ---
         embeddings = HuggingFaceEndpointEmbeddings(
             model="sentence-transformers/all-MiniLM-L6-v2",
             task="feature-extraction",
@@ -158,7 +158,6 @@ async def process_medical_triage(
             for doc in relevant_docs
         ])
 
-        # --- PHASE 2: THE AI TRIAGE ENGINE (Gemini) ---
         llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash", 
             temperature=0,
@@ -185,10 +184,8 @@ async def process_medical_triage(
             "format_instructions": parser.get_format_instructions()
         })
 
-        # 🧠 Normalization layout protection
         ai_diagnosis = {str(k).lower().strip(): v for k, v in ai_diagnosis_raw.items()}
 
-        # --- PHASE 3: RESILIENT YOUTUBE REMEDIES FETCHING ---
         video_list = []
         search_term = ai_diagnosis.get("remedy_search_term")
         
@@ -208,7 +205,6 @@ async def process_medical_triage(
                 }
             ]
 
-        # --- PHASE 4: SMART DYNAMIC LOCATION RESOLUTION ---
         user_city = None
         if payload.explicit_city:
             user_city = payload.explicit_city
@@ -222,13 +218,11 @@ async def process_medical_triage(
         target_specialty = ai_diagnosis.get("recommended_specialization", "General Physician")
         specialty_keyword = target_specialty.replace("ist", "").replace("er", "").strip()
 
-        # Query matching specialization globally
         doc_query = select(Doctor).filter(Doctor.specialization.ilike(f"%{specialty_keyword}%"))
         doc_result = await db.execute(doc_query)
         all_specialists = doc_result.scalars().all()
         
         if not all_specialists:
-            print("💡 No live records found. Injecting system testing fallback specialist.")
             class TestDoctor:
                 id = 101
                 first_name = "Yash"
@@ -295,7 +289,6 @@ async def process_medical_triage(
             recommended_doctors=scored_doctors
         )
         
-        # --- PHASE 5: SAVE STRUCTURAL TRANSACTION LOG ---
         new_diagnosis = Diagnosis(
             user_id=current_user.id, 
             transcript=payload.text,
@@ -308,12 +301,6 @@ async def process_medical_triage(
         return final_payload
 
     except Exception as e:
-        print("\n" + "="*60)
-        print(f"🚨 AI ENDPOINT CRASH DETECTED:")
-        print(f"Error Details: {str(e)}")
-        import traceback
-        traceback.print_exc() 
-        print("="*60 + "\n")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/history")
@@ -333,7 +320,7 @@ async def get_patient_history(
         raise HTTPException(status_code=500, detail=str(e))
     
 
-# 🔄 DEDUPLICATED BACKEND FIX: Combines matching rules while grouping duplicate user entries
+# 🔄 FIX: Automatically checks active appointments to drop booked patients out of the queue array
 @router.get("/doctor/queue") 
 async def get_doctor_consultation_queue(
     db: AsyncSession = Depends(get_db),
@@ -351,7 +338,7 @@ async def get_doctor_consultation_queue(
 
         specialty = doctor_profile.specialization if doctor_profile else "Cardiologist"
 
-        # 🌟 STATE GUARD: Fetch all patient IDs who already have a confirmed, active appointment
+        # 🌟 STATE GUARD: Pull all active customer identifiers from the live appointments table
         appt_query = select(Appointment.patient_id).where(Appointment.status == "SCHEDULED")
         appt_result = await db.execute(appt_query)
         booked_patient_ids = set(appt_result.scalars().all())
@@ -361,17 +348,16 @@ async def get_doctor_consultation_queue(
         all_diagnoses = result.scalars().all()
 
         active_queue = []
-        seen_patients = set()  # Tracks unique users to eliminate UI duplicates
+        seen_patients = set()  
 
         for diag in all_diagnoses:
             if not diag.user_id:
                 continue
                 
-            # 🌟 FIX: If the patient already has a scheduled appointment, instantly filter them out of the queue!
+            # 🌟 STATE GUARD FILTER: If patient has an active booking row, skip them entirely!
             if diag.user_id in booked_patient_ids:
                 continue
                 
-            # Skip processing if we've already grabbed this patient's most recent interaction record
             if diag.user_id in seen_patients:
                 continue
 
@@ -379,18 +365,15 @@ async def get_doctor_consultation_queue(
             analysis_block = ai_data.get("analysis", ai_data) 
             target_specialty = analysis_block.get("recommended_specialization", "General Physician")
             
-            # Query the patient user account row to resolve their name details dynamically
             patient_name = "Anonymous Patient"
             p_result = await db.execute(select(User).where(User.id == diag.user_id))
             patient_user = p_result.scalars().first()
             if patient_user and (patient_user.first_name or patient_user.last_name):
                 patient_name = f"{patient_user.first_name} {patient_user.last_name}".strip()
 
-            # Filter logic matching the doctor's specialty requirements
             if (not specialty or specialty.lower() in target_specialty.lower() or 
                 target_specialty.lower() in specialty.lower() or len(active_queue) < 5):
                 
-                # Mark patient as handled so older rows are skipped
                 seen_patients.add(diag.user_id)
                 
                 active_queue.append({
@@ -403,7 +386,6 @@ async def get_doctor_consultation_queue(
                     "created_at": diag.created_at.isoformat() if diag.created_at else None
                 })
 
-            # Soft protection limit for dashboard workspace presentation sizing
             if len(active_queue) >= 20:
                 break
 
