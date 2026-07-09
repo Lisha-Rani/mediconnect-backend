@@ -320,8 +320,7 @@ async def get_patient_history(
         raise HTTPException(status_code=500, detail=str(e))
     
 
-# 🔄 FIX: Automatically checks active appointments to drop booked patients out of the queue array
-# 🔄 DEDUPLICATED BACKEND FIX WITH LIVE APPOINTMENT FILTER GUARD (TYPE-FORTIFIED)
+# 🔄 Locate the get_doctor_consultation_queue function at the bottom of your ai.py file and replace it:
 @router.get("/doctor/queue") 
 async def get_doctor_consultation_queue(
     db: AsyncSession = Depends(get_db),
@@ -339,14 +338,12 @@ async def get_doctor_consultation_queue(
 
         specialty = doctor_profile.specialization if doctor_profile else "Cardiologist"
 
-        # 🌟 STATE GUARD: Pull active identifiers and cast them into strings for bulletproof matching
-        appt_query = select(Appointment.patient_id).where(Appointment.status.in_(["SCHEDULED", "scheduled"]))
+        appt_query = select(Appointment.patient_id).where(Appointment.status == "SCHEDULED")
         appt_result = await db.execute(appt_query)
         
         # 🛡️ TYPE SAFE GUARD: Force all booking IDs into uniform string format
         booked_patient_ids = {str(pid) for pid in appt_result.scalars().all()}
 
-        # Fetch the most recent triage instances first
         result = await db.execute(select(Diagnosis).order_by(Diagnosis.created_at.desc()))
         all_diagnoses = result.scalars().all()
 
@@ -357,7 +354,7 @@ async def get_doctor_consultation_queue(
             if not diag.user_id:
                 continue
                 
-            # 🌟 FIX: Force diag.user_id to string to safely evaluate comparison against booked_patient_ids string set
+            # 🌟 FIX: Force string evaluation matching to catch table column type differences
             if str(diag.user_id) in booked_patient_ids:
                 continue
                 
