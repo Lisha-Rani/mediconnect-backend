@@ -84,7 +84,8 @@ async def book_doctor_appointment(
     )
 
 # --- THE LISTING ENDPOINT ---
-@router.get("/list", response_model=list)
+# --- THE LISTING ENDPOINT ---
+@router.get("/list")
 async def get_all_doctor_appointments(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -99,10 +100,18 @@ async def get_all_doctor_appointments(
         patient = p_res.scalars().first()
         p_name = f"{patient.first_name} {patient.last_name}" if patient else "Verified Case"
         
+        # 🔄 FIX: Send explicit date strings and layout-matching structural keys
         formatted.append({
-            "time": appt.appointment_date.strftime("%I:%M %p") if appt.appointment_date else "10:00 AM",
+            "id": appt.id,
             "name": p_name,
+            "patient_name": p_name,
+            "patientName": p_name,
+            "date": appt.appointment_date.strftime("%Y-%m-%d") if appt.appointment_date else "2026-07-09",
+            "appointment_date": appt.appointment_date.strftime("%Y-%m-%d") if appt.appointment_date else "2026-07-09",
+            "time": appt.appointment_date.strftime("%I:%M %p") if appt.appointment_date else "10:00 AM",
+            "appointment_time": appt.appointment_date.strftime("%I:%M %p") if appt.appointment_date else "10:00 AM",
             "type": "Clinical Consultation",
-            "status": appt.status.upper()
+            "specialty": "Clinical Consultation",
+            "status": appt.status.upper() # Keeps 'SCHEDULED' or 'CONSULTED' status constraints intact
         })
     return formatted

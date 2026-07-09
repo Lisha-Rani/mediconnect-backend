@@ -6,7 +6,7 @@ from sqlalchemy import text
 from app.core.config import settings
 from app.db.session import engine, Base
 # 🔄 The endpoints are imported cleanly here
-from app.api.endpoints import auth, ai, appointments, ai_chat, doctor, prescriptions
+from app.api.endpoints import auth, ai, appointments, ai_chat, doctors, prescriptions
 
 # 🚨 ONLY ONE LIFESPAN BLOCK ALLOWED
 @asynccontextmanager
