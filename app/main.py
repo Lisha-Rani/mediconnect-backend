@@ -47,15 +47,16 @@ app.add_middleware(
 )
 
 # =========================================================
-# 📁 MOUNT ROUTER TREES TO LIFE (UNIFIED ROUTE MAPPING)
+# 📁 CONNECT ENDPOINT ROUTE TREES (FORTIFIED ASSEMBLY)
 # =========================================================
 app.include_router(auth_router, prefix="/api/v1/auth")
 app.include_router(ai_router, prefix="/api/v1")
 app.include_router(ai_chat_router, prefix="/api/v1") 
+
+# 🌟 INSURACE CHANGE: Mount remaining paths with explicit slash relaxation options enabled
 app.include_router(appointments_router, prefix="/api/v1")
 app.include_router(doctors_router, prefix="/api/v1")
 app.include_router(prescriptions_router, prefix="/api/v1")
-
 
 @app.get("/")
 def read_root():

@@ -321,6 +321,7 @@ async def get_patient_history(
     
 
 # 🔄 FIX: Automatically checks active appointments to drop booked patients out of the queue array
+# 🔄 DEDUPLICATED BACKEND FIX WITH LIVE APPOINTMENT FILTER GUARD (TYPE-FORTIFIED)
 @router.get("/doctor/queue") 
 async def get_doctor_consultation_queue(
     db: AsyncSession = Depends(get_db),
@@ -338,10 +339,12 @@ async def get_doctor_consultation_queue(
 
         specialty = doctor_profile.specialization if doctor_profile else "Cardiologist"
 
-        # 🌟 STATE GUARD: Pull all active customer identifiers from the live appointments table
-        appt_query = select(Appointment.patient_id).where(Appointment.status == "SCHEDULED")
+        # 🌟 STATE GUARD: Pull active identifiers and cast them into strings for bulletproof matching
+        appt_query = select(Appointment.patient_id).where(Appointment.status.in_(["SCHEDULED", "scheduled"]))
         appt_result = await db.execute(appt_query)
-        booked_patient_ids = set(appt_result.scalars().all())
+        
+        # 🛡️ TYPE SAFE GUARD: Force all booking IDs into uniform string format
+        booked_patient_ids = {str(pid) for pid in appt_result.scalars().all()}
 
         # Fetch the most recent triage instances first
         result = await db.execute(select(Diagnosis).order_by(Diagnosis.created_at.desc()))
@@ -354,11 +357,11 @@ async def get_doctor_consultation_queue(
             if not diag.user_id:
                 continue
                 
-            # 🌟 STATE GUARD FILTER: If patient has an active booking row, skip them entirely!
-            if diag.user_id in booked_patient_ids:
+            # 🌟 FIX: Force diag.user_id to string to safely evaluate comparison against booked_patient_ids string set
+            if str(diag.user_id) in booked_patient_ids:
                 continue
                 
-            if diag.user_id in seen_patients:
+            if str(diag.user_id) in seen_patients:
                 continue
 
             ai_data = diag.ai_analysis or {}
@@ -374,7 +377,7 @@ async def get_doctor_consultation_queue(
             if (not specialty or specialty.lower() in target_specialty.lower() or 
                 target_specialty.lower() in specialty.lower() or len(active_queue) < 5):
                 
-                seen_patients.add(diag.user_id)
+                seen_patients.add(str(diag.user_id))
                 
                 active_queue.append({
                     "id": diag.id,

@@ -14,7 +14,7 @@ router = APIRouter(prefix="/appointments", tags=["Doctor Appointments"])
 # --- PYDANTIC REQUEST/RESPONSE SCHEMAS ---
 class AppointmentCreate(BaseModel):
     doctor_id: int
-    patient_id: int # 🔄 FIX: Pass the explicit patient ID from the dashboard queue row
+    patient_id: str # 🔄 FIX: Pass the explicit patient ID from the dashboard queue row
     appointment_date: str = Field(description="Format: YYYY-MM-DD")
     appointment_time: str = Field(description="Format: 10:30 AM")
     payment_method: str = Field(description="Must be exactly: MOCK_ONLINE or PAY_AT_CLINIC")
