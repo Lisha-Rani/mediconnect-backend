@@ -23,4 +23,4 @@ class DoctorResponse(BaseModel):
     consultation_fee: int
 
     class Config:
-        from_attributes = True  # Allows SQLAlchemy ORM objects to parse into this schema cleanly
+        from_attributes = True  # Allows SQLAlchemy ORM models to be parsed automatically

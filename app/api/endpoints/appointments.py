@@ -11,9 +11,10 @@ from app.api.dependencies import get_current_user
 
 router = APIRouter(prefix="/appointments", tags=["Doctor Appointments"])
 
+# --- PYDANTIC REQUEST/RESPONSE SCHEMAS ---
 class AppointmentCreate(BaseModel):
     doctor_id: int
-    patient_id: str # 🌟 FIX: Swapped from int to str to support true UUID string tokens safely!
+    patient_id: str # 🌟 FIX: Changed from int to str to support true UUID string tokens safely!
     appointment_date: str = Field(description="Format: YYYY-MM-DD")
     appointment_time: str = Field(description="Format: 10:30 AM")
     payment_method: str = Field(description="Must be exactly: MOCK_ONLINE or PAY_AT_CLINIC")
@@ -29,6 +30,7 @@ class AppointmentResponse(BaseModel):
     payment_status: str
     booking_status: str
 
+# --- THE BOOKING ENDPOINT ---
 @router.post("/book", response_model=AppointmentResponse, status_code=status.HTTP_201_CREATED)
 async def book_doctor_appointment(
     payload: AppointmentCreate,
@@ -47,7 +49,7 @@ async def book_doctor_appointment(
         raise HTTPException(status_code=400, detail="Invalid date or time structure.")
 
     new_appointment = Appointment(
-        patient_id=payload.patient_id, # 🌟 Stores the true unmangled string UUID token
+        patient_id=payload.patient_id, # 🌟 Links row to the true string UUID
         doctor_id=payload.doctor_id,
         appointment_date=parsed_appointment_date,
         status="SCHEDULED"
@@ -75,6 +77,7 @@ async def book_doctor_appointment(
         booking_status=new_appointment.status
     )
 
+# --- THE LISTING ENDPOINT ---
 @router.get("/list")
 async def get_all_doctor_appointments(
     db: AsyncSession = Depends(get_db),
@@ -95,9 +98,9 @@ async def get_all_doctor_appointments(
             "name": p_name,
             "patient_name": p_name,
             "patientName": p_name,
-            "patient_id": str(appt.patient_id), 
-            "date": appt.appointment_date.strftime("%Y-%m-%d") if appt.appointment_date else "2026-07-11",
-            "appointment_date": appt.appointment_date.strftime("%Y-%m-%d") if appt.appointment_date else "2026-07-11",
+            "patient_id": str(appt.patient_id),
+            "date": appt.appointment_date.strftime("%Y-%m-%d") if appt.appointment_date else "2026-07-12",
+            "appointment_date": appt.appointment_date.strftime("%Y-%m-%d") if appt.appointment_date else "2026-07-12",
             "time": appt.appointment_date.strftime("%I:%M %p") if appt.appointment_date else "10:00 AM",
             "appointment_time": appt.appointment_date.strftime("%I:%M %p") if appt.appointment_date else "10:00 AM",
             "type": "Clinical Consultation",

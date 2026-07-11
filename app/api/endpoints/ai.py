@@ -13,7 +13,6 @@ from sqlalchemy.future import select
 
 from app.core.config import settings
 from app.db.session import get_db
-# 🔄 FIX: Ensure Appointment is imported alongside your other models
 from app.db.models import Diagnosis, User, MedicalKnowledge, Doctor, Appointment
 from app.api.dependencies import get_current_user
 
@@ -320,7 +319,7 @@ async def get_patient_history(
         raise HTTPException(status_code=500, detail=str(e))
     
 
-# 🔄 Locate the get_doctor_consultation_queue function at the bottom of your ai.py file and replace it:
+# 🔄 FORTIFIED QUEUE COMPILER WITH LIVE CASE-INSENSITIVE STATUS PROTECTION 
 @router.get("/doctor/queue") 
 async def get_doctor_consultation_queue(
     db: AsyncSession = Depends(get_db),
@@ -338,11 +337,12 @@ async def get_doctor_consultation_queue(
 
         specialty = doctor_profile.specialization if doctor_profile else "Cardiologist"
 
-        appt_query = select(Appointment.patient_id).where(Appointment.status == "SCHEDULED")
+        # 🌟 FIX 1: Catch appointments regardless of whether status is stored as 'SCHEDULED' or 'scheduled'
+        appt_query = select(Appointment.patient_id).where(Appointment.status.in_(["SCHEDULED", "scheduled"]))
         appt_result = await db.execute(appt_query)
         
-        # 🛡️ TYPE SAFE GUARD: Force all booking IDs into uniform string format
-        booked_patient_ids = {str(pid) for pid in appt_result.scalars().all()}
+        # 🌟 FIX 2: Lowercase and strip all IDs to guarantee hex matching (e.g., matching 'A-F' with 'a-f')
+        booked_patient_ids = {str(pid).lower().strip() for pid in appt_result.scalars().all()}
 
         result = await db.execute(select(Diagnosis).order_by(Diagnosis.created_at.desc()))
         all_diagnoses = result.scalars().all()
@@ -354,11 +354,11 @@ async def get_doctor_consultation_queue(
             if not diag.user_id:
                 continue
                 
-            # 🌟 FIX: Force string evaluation matching to catch table column type differences
-            if str(diag.user_id) in booked_patient_ids:
+            # 🌟 FIX 3: Enforce standardized string token evaluation inside the filter check
+            if str(diag.user_id).lower().strip() in booked_patient_ids:
                 continue
                 
-            if str(diag.user_id) in seen_patients:
+            if str(diag.user_id).lower().strip() in seen_patients:
                 continue
 
             ai_data = diag.ai_analysis or {}
@@ -374,7 +374,7 @@ async def get_doctor_consultation_queue(
             if (not specialty or specialty.lower() in target_specialty.lower() or 
                 target_specialty.lower() in specialty.lower() or len(active_queue) < 5):
                 
-                seen_patients.add(str(diag.user_id))
+                seen_patients.add(str(diag.user_id).lower().strip())
                 
                 active_queue.append({
                     "id": diag.id,
