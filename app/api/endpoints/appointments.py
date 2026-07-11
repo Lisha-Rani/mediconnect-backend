@@ -14,7 +14,7 @@ router = APIRouter(prefix="/appointments", tags=["Doctor Appointments"])
 # --- PYDANTIC REQUEST/RESPONSE SCHEMAS ---
 class AppointmentCreate(BaseModel):
     doctor_id: int
-    patient_id: str # 🌟 FIX: Changed from int to str to support true UUID string tokens safely!
+    patient_id: str # 🌟 FIX: Swapped from int to str to seamlessly carry text UUID strings!
     appointment_date: str = Field(description="Format: YYYY-MM-DD")
     appointment_time: str = Field(description="Format: 10:30 AM")
     payment_method: str = Field(description="Must be exactly: MOCK_ONLINE or PAY_AT_CLINIC")
@@ -35,7 +35,7 @@ class AppointmentResponse(BaseModel):
 async def book_doctor_appointment(
     payload: AppointmentCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user) # Used to verify authorization context
+    current_user: User = Depends(get_current_user)
 ):
     # 1. Verify that the requested doctor exists
     doc_query = await db.execute(select(Doctor).where(Doctor.id == payload.doctor_id))
@@ -50,16 +50,16 @@ async def book_doctor_appointment(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date or time structure.")
 
-    # 3. Save transaction using payload.patient_id as a persistent string UUID
+    # 3. Save transaction using payload.patient_id as a complete string UUID token
     new_appointment = Appointment(
-        patient_id=payload.patient_id, # 🌟 FIX: Links row to the true string UUID
+        patient_id=payload.patient_id, # 🌟 Links the unmangled string UUID token
         doctor_id=payload.doctor_id,
         appointment_date=parsed_appointment_date,
         status="SCHEDULED"
     )
     db.add(new_appointment)
     
-    # 🌟 4. THE FIX: Target and wipe out the actual Patient's active triage queue records using the string token!
+    # 4. Wipe out the actual Patient's active triage queue records out of DB
     triage_query = await db.execute(select(Diagnosis).where(Diagnosis.user_id == payload.patient_id))
     active_triage_records = triage_query.scalars().all()
     print(f"➔ [MediAI Debug] Attempting to clear queue for patient_id: {payload.patient_id}")
@@ -70,7 +70,6 @@ async def book_doctor_appointment(
     await db.commit()
     await db.refresh(new_appointment)
     
-    # 5. Return complete schema block back to Next.js
     return AppointmentResponse(
         appointment_id=new_appointment.id,
         doctor_name=f"Dr. {doctor.first_name} {doctor.last_name}",
@@ -99,7 +98,6 @@ async def get_all_doctor_appointments(
         patient = p_res.scalars().first()
         p_name = f"{patient.first_name} {patient.last_name}" if patient else "Verified Case"
         
-        # 🔄 FIX: Send explicit date strings and layout-matching structural keys
         formatted.append({
             "id": appt.id,
             "name": p_name,
@@ -112,6 +110,6 @@ async def get_all_doctor_appointments(
             "appointment_time": appt.appointment_date.strftime("%I:%M %p") if appt.appointment_date else "10:00 AM",
             "type": "Clinical Consultation",
             "specialty": "Clinical Consultation",
-            "status": appt.status.upper() # Keeps 'SCHEDULED' or 'CONSULTED' status constraints intact
+            "status": appt.status.upper() 
         })
     return formatted
