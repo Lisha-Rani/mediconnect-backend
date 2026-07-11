@@ -11,10 +11,9 @@ from app.api.dependencies import get_current_user
 
 router = APIRouter(prefix="/appointments", tags=["Doctor Appointments"])
 
-# --- PYDANTIC REQUEST/RESPONSE SCHEMAS ---
 class AppointmentCreate(BaseModel):
     doctor_id: int
-    patient_id: str # 🌟 FIX: Swapped from int to str to seamlessly carry text UUID strings!
+    patient_id: str # 🌟 FIX: Swapped from int to str to support true UUID string tokens safely!
     appointment_date: str = Field(description="Format: YYYY-MM-DD")
     appointment_time: str = Field(description="Format: 10:30 AM")
     payment_method: str = Field(description="Must be exactly: MOCK_ONLINE or PAY_AT_CLINIC")
@@ -30,40 +29,34 @@ class AppointmentResponse(BaseModel):
     payment_status: str
     booking_status: str
 
-# --- THE BOOKING ENDPOINT ---
 @router.post("/book", response_model=AppointmentResponse, status_code=status.HTTP_201_CREATED)
 async def book_doctor_appointment(
     payload: AppointmentCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # 1. Verify that the requested doctor exists
     doc_query = await db.execute(select(Doctor).where(Doctor.id == payload.doctor_id))
     doctor = doc_query.scalars().first()
     if not doctor:
         raise HTTPException(status_code=404, detail="The requested medical practitioner does not exist.")
 
-    # 2. Parse date string safely into a native datetime object
     try:
         combined_datetime_str = f"{payload.appointment_date} {payload.appointment_time}"
         parsed_appointment_date = datetime.strptime(combined_datetime_str, "%Y-%m-%d %I:%M %p")
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date or time structure.")
 
-    # 3. Save transaction using payload.patient_id as a complete string UUID token
     new_appointment = Appointment(
-        patient_id=payload.patient_id, # 🌟 Links the unmangled string UUID token
+        patient_id=payload.patient_id, # 🌟 Stores the true unmangled string UUID token
         doctor_id=payload.doctor_id,
         appointment_date=parsed_appointment_date,
         status="SCHEDULED"
     )
     db.add(new_appointment)
     
-    # 4. Wipe out the actual Patient's active triage queue records out of DB
+    # 🌟 Wipes out the active triage queue record using the correct string format lookup!
     triage_query = await db.execute(select(Diagnosis).where(Diagnosis.user_id == payload.patient_id))
     active_triage_records = triage_query.scalars().all()
-    print(f"➔ [MediAI Debug] Attempting to clear queue for patient_id: {payload.patient_id}")
-    print(f"➔ [MediAI Debug] Number of active triage records found to delete: {len(active_triage_records)}")
     for record in active_triage_records:
         await db.delete(record) 
 
@@ -82,7 +75,6 @@ async def book_doctor_appointment(
         booking_status=new_appointment.status
     )
 
-# --- THE LISTING ENDPOINT ---
 @router.get("/list")
 async def get_all_doctor_appointments(
     db: AsyncSession = Depends(get_db),
@@ -103,9 +95,9 @@ async def get_all_doctor_appointments(
             "name": p_name,
             "patient_name": p_name,
             "patientName": p_name,
-            "patient_id": str(appt.patient_id),
-            "date": appt.appointment_date.strftime("%Y-%m-%d") if appt.appointment_date else "2026-07-10",
-            "appointment_date": appt.appointment_date.strftime("%Y-%m-%d") if appt.appointment_date else "2026-07-10",
+            "patient_id": str(appt.patient_id), 
+            "date": appt.appointment_date.strftime("%Y-%m-%d") if appt.appointment_date else "2026-07-11",
+            "appointment_date": appt.appointment_date.strftime("%Y-%m-%d") if appt.appointment_date else "2026-07-11",
             "time": appt.appointment_date.strftime("%I:%M %p") if appt.appointment_date else "10:00 AM",
             "appointment_time": appt.appointment_date.strftime("%I:%M %p") if appt.appointment_date else "10:00 AM",
             "type": "Clinical Consultation",

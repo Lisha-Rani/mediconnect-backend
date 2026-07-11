@@ -15,45 +15,30 @@ async def get_doctor_profile(
     if current_user.role.lower() != "doctor":
         raise HTTPException(status_code=403, detail="Access denied. Account is not assigned a provider role.")
     
-    # Attempt to locate extended profile attributes from your doctor table matrix
+    specialization = "General Triage Review"
+    hospital_clinic = "MediAI Central Clinic"
+    city = "Patna"
+    consultation_fee = 500
+
     try:
         result = await db.execute(select(Doctor).where(Doctor.email == current_user.email))
         doctor = result.scalars().first()
         if doctor:
-            return doctor
+            specialization = getattr(doctor, 'specialization', specialization)
+            hospital_clinic = getattr(doctor, 'hospital_clinic', hospital_clinic)
+            city = getattr(doctor, 'city', city)
+            consultation_fee = getattr(doctor, 'consultation_fee', consultation_fee)
     except Exception:
         pass
 
-    # Safe dynamic fallback profile structure if extended doctor table records aren't seeded yet
+    # 🌟 FIX: Explicitly map the string dictionary fields to prevent "Dr. undefined" in frontend layouts
     return {
         "id": current_user.id,
         "first_name": current_user.first_name or "Attending",
         "last_name": current_user.last_name or "Physician",
-        "specialization": "General Triage Review",
-        "hospital_clinic": "MediAI Central Clinic",
-        "city": "Patna",
+        "specialization": specialization,
+        "hospital_clinic": hospital_clinic,
+        "city": city,
         "email": current_user.email,
-        "consultation_fee": 500
+        "consultation_fee": consultation_fee
     }
-
-@router.get("/patient/profile")
-async def get_patient_profile(current_user: User = Depends(get_current_user)):
-    return {
-        "id": current_user.id,
-        "first_name": current_user.first_name or "Verified",
-        "last_name": current_user.last_name or "Patient",
-        "email": current_user.email
-    }
-
-@router.get("/doctor/patients")
-async def get_doctor_patients_treated(current_user: User = Depends(get_current_user)):
-    # Streams seed tracking directories so the historical patient ledger loads without failing
-    return [
-        {
-            "id": 99,
-            "name": "Anonymous Case Archive",
-            "patient_name": "Anonymous Case Archive",
-            "primary_condition": "Clinical Evaluation Complete",
-            "last_visit": "2026-07-10"
-        }
-    ]
