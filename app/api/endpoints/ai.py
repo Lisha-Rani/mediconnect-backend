@@ -320,6 +320,7 @@ async def get_patient_history(
     
 
 # 🔄 FORTIFIED QUEUE COMPILER WITH LIVE CASE-INSENSITIVE STATUS PROTECTION 
+# 🔄 Locate get_doctor_consultation_queue function at bottom of endpoints/ai.py and update this block:
 @router.get("/doctor/queue") 
 async def get_doctor_consultation_queue(
     db: AsyncSession = Depends(get_db),
@@ -327,7 +328,7 @@ async def get_doctor_consultation_queue(
 ):
     if current_user.role.lower() != "doctor":
         raise HTTPException(status_code=403, detail="Access denied.")
-
+        # 🔄 Locate this section inside get_doctor_consultation_queue in endpoints/ai.py:
     try:
         doctor_profile = None
         if hasattr(current_user, 'doctor_id') and current_user.doctor_id:
@@ -337,11 +338,11 @@ async def get_doctor_consultation_queue(
 
         specialty = doctor_profile.specialization if doctor_profile else "Cardiologist"
 
-        # 🌟 FIX 1: Catch appointments regardless of whether status is stored as 'SCHEDULED' or 'scheduled'
-        appt_query = select(Appointment.patient_id).where(Appointment.status.in_(["SCHEDULED", "scheduled"]))
+        # 🌟 FIX: Use case-insensitive matching (.ilike) to capture 'scheduled' or 'SCHEDULED' seamlessly
+        appt_query = select(Appointment.patient_id).where(Appointment.status.ilike("scheduled"))
         appt_result = await db.execute(appt_query)
         
-        # 🌟 FIX 2: Lowercase and strip all IDs to guarantee hex matching (e.g., matching 'A-F' with 'a-f')
+        # Standardize UUID objects into lowercased strings for robust set matching
         booked_patient_ids = {str(pid).lower().strip() for pid in appt_result.scalars().all()}
 
         result = await db.execute(select(Diagnosis).order_by(Diagnosis.created_at.desc()))
@@ -354,11 +355,12 @@ async def get_doctor_consultation_queue(
             if not diag.user_id:
                 continue
                 
-            # 🌟 FIX 3: Enforce standardized string token evaluation inside the filter check
-            if str(diag.user_id).lower().strip() in booked_patient_ids:
+            current_patient_id_str = str(diag.user_id).lower().strip()
+                
+            if current_patient_id_str in booked_patient_ids:
                 continue
                 
-            if str(diag.user_id).lower().strip() in seen_patients:
+            if current_patient_id_str in seen_patients:
                 continue
 
             ai_data = diag.ai_analysis or {}
@@ -374,7 +376,7 @@ async def get_doctor_consultation_queue(
             if (not specialty or specialty.lower() in target_specialty.lower() or 
                 target_specialty.lower() in specialty.lower() or len(active_queue) < 5):
                 
-                seen_patients.add(str(diag.user_id).lower().strip())
+                seen_patients.add(current_patient_id_str)
                 
                 active_queue.append({
                     "id": diag.id,

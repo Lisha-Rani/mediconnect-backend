@@ -1,127 +1,193 @@
-import uuid  # 🔄 Generates clean UUID strings for user accounts safely
-from fastapi import APIRouter, Depends, HTTPException, status
+import uuid
+from datetime import datetime, timedelta
+# 🌟 FIX: Added 'Request' to the end of this import statement!
+from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from fastapi.security import OAuth2PasswordRequestForm
+from jose import jwt, JWTError
+from passlib.context import CryptContext
 
 from app.db.session import get_db
 from app.db.models import User, Doctor, RoleEnum
-from app.schemas.user import UserCreate, UserResponse, Token
-from app.core.security import get_password_hash, verify_password, create_access_token
-from app.schemas.ai import DoctorCreate, DoctorResponse
+router = APIRouter(prefix="/auth", tags=["System Authentication"])
 
-router = APIRouter()
+# --- SECURITY UTILITY ENGINE ---
+PWD_CONTEXT = CryptContext(schemes=["bcrypt"], deprecated="auto")
+SECRET_KEY = "SUPER_SECRET_KEY_MEDIAI_CORE_NODE_CHANGE_THIS_IN_PROD"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 120
 
-# 👤 1. STANDARD PATIENT REGISTRATION
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
+def hash_password(password: str) -> str:
+    return PWD_CONTEXT.hash(password)
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return PWD_CONTEXT.verify(plain_password, hashed_password)
+
+def create_access_token(data: dict) -> str:
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+
+# --- PYDANTIC VALIDATION SCHEMAS ---
+class UserRegisterRequest(BaseModel):
+    email: EmailStr
+    password: str
+    first_name: str | None = "Anonymous"
+    last_name: str | None = "Patient"
+    role: str = "patient"  # 'patient' or 'doctor'
     
-    # 1. Check if user already exists
-    result = await db.execute(select(User).where(User.email == user_data.email))
-    existing_user = result.scalars().first()
-    
-    if existing_user:
-        raise HTTPException(status_code=400, detail="Email already registered")
+    # Optional fields required if registering a provider profile
+    registration_number: str | None = None
+    specialization: str | None = None
+    hospital_clinic: str | None = None
+    city: str | None = None
+    consultation_fee: int | None = 450
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str
+    role: str
+    name: str
+
+
+# =========================================================
+# 📝 ROUTE 1: THE REGISTRATION CONTROLLER
+# =========================================================
+@router.post("/register", status_code=status.HTTP_201_CREATED)
+async def register_new_user(payload: UserRegisterRequest, db: AsyncSession = Depends(get_db)):
+    # 1. Check if email handle is already registered
+    existing_user_query = await db.execute(select(User).where(User.email == payload.email))
+    if existing_user_query.scalars().first():
+        raise HTTPException(status_code=400, detail="An account with this email address already exists.")
+
+    # 2. Derive standardized lowercase role flags
+    requested_role = payload.role.lower().strip()
+    db_role_string = RoleEnum.PATIENT.value
+    assigned_doctor_profile_id = None
+
+    # 3. Handle specific provider profile requirements
+    if requested_role == "doctor":
+        # Force validation parameters for medical providers
+        if not payload.registration_number or not payload.specialization or not payload.hospital_clinic:
+            raise HTTPException(
+                status_code=400, 
+                detail="Medical registration number, specialization, and clinic details are required for doctors."
+            )
+            
+        # Standardize matching to the uppercase Enum layout defined inside models.py
+        db_role_string = "DOCTOR" 
         
-    # 2. Hash password
-    hashed_password = get_password_hash(user_data.password)
-    
-    # Normalize incoming role strings matching enum schemas
-    assigned_role = RoleEnum.DOCTOR.value if "doctor" in user_data.role.lower() else RoleEnum.PATIENT.value
-    
-    # 3. Save new user with structural fields included
-    new_user = User(
-        id=str(uuid.uuid4()),
-        email=user_data.email,
-        hashed_password=hashed_password,
-        # 🔄 FIX: Reference incoming data payload and map both first and last names cleanly
-        first_name=user_data.first_name.strip() if user_data.first_name else "Anonymous",
-        last_name=user_data.last_name.strip() if user_data.last_name else "Patient",
-        role=assigned_role,  
-        is_active=True
-    )
-    
-    db.add(new_user)
-    await db.commit()
-    await db.refresh(new_user)
-    
-    return new_user
-
-
-# 🔑 2. SECURE USER LOGIN GATEWAY
-@router.post("/login", response_model=Token)
-async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
-    # Find user by email (OAuth2 uses 'username' field for the email payload context)
-    result = await db.execute(select(User).where(User.email == form_data.username))
-    user = result.scalars().first()
-    
-    # Verify user exists and credentials match
-    if not user or not verify_password(form_data.password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Bearer"},
+        # Instantiate rows inside the doctors table
+        new_doctor_profile = Doctor(
+            first_name=payload.first_name or "Attending",
+            last_name=payload.last_name or "Physician",
+            email=payload.email,
+            registration_number=payload.registration_number,
+            specialization=payload.specialization,
+            hospital_clinic=payload.hospital_clinic,
+            city=payload.city or "Patna",
+            consultation_fee=payload.consultation_fee or 500
         )
-        
-    # Generate the JWT Token safely without trying to call .value on a plain string column!
-    access_token = create_access_token(
-        data={
-            "sub": str(user.id), 
-            "role": str(user.role)  # Reads the string column value directly out of the user object
-        }
-    )
-    
-    return {"access_token": access_token, "token_type": "bearer"}
+        db.add(new_doctor_profile)
+        await db.flush()  # Populates new_doctor_profile.id instantly
+        assigned_doctor_profile_id = new_doctor_profile.id
 
+    # 4. 🌟 FIX: Manually instantiate a clean native Python UUID object to satisfy column constraints
+    fresh_user_uuid = uuid.uuid4()
+    encrypted_pass = hash_password(payload.password)
 
-# 🩺 3. SPECIALIZED MEDICAL PROVIDER REGISTRATION
-@router.post("/register/doctor", response_model=DoctorResponse, status_code=status.HTTP_201_CREATED)
-async def register_doctor(doctor_data: DoctorCreate, db: AsyncSession = Depends(get_db)):
-    
-    # 1. Check if the email already exists in the User table
-    user_check = await db.execute(select(User).where(User.email == doctor_data.email))
-    if user_check.scalars().first():
-        raise HTTPException(status_code=400, detail="Email already registered to a user account.")
-        
-    # 2. Check if registration number already exists in Doctor table
-    doc_check = await db.execute(select(Doctor).where(Doctor.registration_number == doctor_data.registration_number))
-    if doc_check.scalars().first():
-        raise HTTPException(status_code=400, detail="Medical registration number already exists.")
-
-    # 3. Hash the password
-    hashed_password = get_password_hash(doctor_data.password)
-
-    # 4. Create the Doctor Profile record
-    new_doctor_profile = Doctor(
-        first_name=doctor_data.first_name,
-        last_name=doctor_data.last_name,
-        email=doctor_data.email,                                
-        registration_number=doctor_data.registration_number,
-        specialization=doctor_data.specialization,
-        hospital_clinic=doctor_data.hospital_clinic,
-        city=doctor_data.city,
-        consultation_fee=doctor_data.consultation_fee,
-        password_hash=hashed_password
-    )
-    db.add(new_doctor_profile)
-    await db.flush()  # Pushes profile to DB to generate new_doctor_profile.id
-
-    # 5. Create the User login account and link it to the Doctor profile
-    new_user = User(
-        id=str(uuid.uuid4()),  
-        email=doctor_data.email,
-        hashed_password=hashed_password,
-        role=RoleEnum.DOCTOR.value,  
-        doctor_id=new_doctor_profile.id,  # Links login account to the doctor profile
-        # 🔄 FIX: Sync doctor's names onto their User row for absolute data alignment
-        first_name=doctor_data.first_name,
-        last_name=doctor_data.last_name,
+    # 5. Build the unified core user authentication row
+    new_user_account = User(
+        id=fresh_user_uuid, # Passes a native structural UUID object securely
+        email=payload.email,
+        hashed_password=encrypted_pass,
+        role=db_role_string,
+        doctor_id=assigned_doctor_profile_id,
+        first_name=payload.first_name,
+        last_name=payload.last_name,
         is_active=True
     )
-    db.add(new_user)
     
-    # 6. Safely commit both items together
+    db.add(new_user_account)
     await db.commit()
-    await db.refresh(new_doctor_profile)
     
-    return new_doctor_profile
+    return {
+        "status": "success",
+        "message": f"Account successfully registered as {db_role_string.lower()}.",
+        "user_id": str(fresh_user_uuid)
+    }
+
+
+# =========================================================
+# 🔑 ROUTE 2: THE UNIFIED LOGIN CONTROLLER
+# =========================================================
+# =========================================================
+# 🔑 UPGRADED UNIFIED LOGIN CONTROLLER (DUAL-MODE SAFE)
+# =========================================================
+@router.post("/login", response_model=TokenResponse)
+async def login_user(request: Request, db: AsyncSession = Depends(get_db)):
+    # 1. Parse incoming payload safely regardless of frontend framework conventions
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON request payload structure.")
+
+    # 🌟 FIX: Extract identifier whether frontend sends it as 'email' or 'username'
+    input_email = body.get("email") or body.get("username")
+    input_password = body.get("password")
+
+    if not input_email or not input_password:
+        raise HTTPException(status_code=422, detail="Missing required authentication credentials fields.")
+
+    # 2. Query database using normalized lowercase email strings
+    clean_email = str(input_email).strip().lower()
+    user_query = await db.execute(select(User).where(User.email == clean_email))
+    user = user_query.scalars().first()
+    
+    # Terminal debug helper to verify user presence instantly
+    print(f"\n➔ [MediAI Auth Debug] Attempting login verification for: '{clean_email}'")
+    if not user:
+        print("   - ❌ Status 401: Target email string completely missing from database columns.")
+        raise HTTPException(status_code=401, detail="Invalid credentials. Check email or password typing.")
+
+    # 3. Validate password cryptography match against the User table baseline
+    if not verify_password(input_password, user.hashed_password):
+        print("   - ❌ Status 401: Cryptographic password verification check failed.")
+        raise HTTPException(status_code=401, detail="Invalid credentials. Check email or password typing.")
+
+    if not user.is_active:
+        raise HTTPException(status_code=400, detail="This account profile has been deactivated.")
+
+    print("   - ✅ Status 200: Credentials verified successfully! Granting JWT access token keys.")
+
+    # 4. Standardize role strings and display formatting parameters
+    user_display_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+    user_role_str = "doctor" if str(user.role).upper() == "DOCTOR" else "patient"
+    
+    if user_role_str == "doctor":
+        user_display_name = f"Dr. {user_display_name}".strip()
+
+    # 5. Build secure token response model array
+    token_claims = {
+        "sub": str(user.id),  
+        "email": user.email,
+        "role": user_role_str,
+        "id": str(user.id)
+    }
+    
+    generated_jwt_token = create_access_token(data=token_claims)
+
+    return TokenResponse(
+        access_token=generated_jwt_token,
+        token_type="bearer",
+        role=user_role_str,
+        name=user_display_name or "Verified User Node"
+    )

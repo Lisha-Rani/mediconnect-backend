@@ -1,4 +1,4 @@
-import uuid
+import uuid # 🌟 REQUIRED: Import Python's native UUID parsing library
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -11,10 +11,9 @@ from app.api.dependencies import get_current_user
 
 router = APIRouter(prefix="/appointments", tags=["Doctor Appointments"])
 
-# --- PYDANTIC REQUEST/RESPONSE SCHEMAS ---
 class AppointmentCreate(BaseModel):
     doctor_id: int
-    patient_id: str # 🌟 FIX: Changed from int to str to support true UUID string tokens safely!
+    patient_id: str 
     appointment_date: str = Field(description="Format: YYYY-MM-DD")
     appointment_time: str = Field(description="Format: 10:30 AM")
     payment_method: str = Field(description="Must be exactly: MOCK_ONLINE or PAY_AT_CLINIC")
@@ -30,7 +29,6 @@ class AppointmentResponse(BaseModel):
     payment_status: str
     booking_status: str
 
-# --- THE BOOKING ENDPOINT ---
 @router.post("/book", response_model=AppointmentResponse, status_code=status.HTTP_201_CREATED)
 async def book_doctor_appointment(
     payload: AppointmentCreate,
@@ -48,22 +46,28 @@ async def book_doctor_appointment(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date or time structure.")
 
+    # 🌟 FIX A: Parse the string token into a proper structural UUID instance
+    try:
+        target_patient_uuid = uuid.UUID(payload.patient_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Provided patient identifier is not a valid UUID string.")
+
     new_appointment = Appointment(
-        patient_id=payload.patient_id, # 🌟 Links row to the true string UUID
+        patient_id=target_patient_uuid, # Pass the true native UUID object
         doctor_id=payload.doctor_id,
         appointment_date=parsed_appointment_date,
-        status="SCHEDULED"
+        status="scheduled" # Matches default lowercase rule inside models.py
     )
     db.add(new_appointment)
     
-    # 🌟 Wipes out the active triage queue record using the correct string format lookup!
-    triage_query = await db.execute(select(Diagnosis).where(Diagnosis.user_id == payload.patient_id))
+    # 🌟 FIX B: Target and clear out the active triage queue using the matching UUID type context
+    triage_query = await db.execute(select(Diagnosis).where(Diagnosis.user_id == target_patient_uuid))
     active_triage_records = triage_query.scalars().all()
     for record in active_triage_records:
         await db.delete(record) 
 
-    await db.commit()
-    await db.refresh(new_appointment)
+    #await db.commit()
+    #await db.refresh(new_appointment)
     
     return AppointmentResponse(
         appointment_id=new_appointment.id,
@@ -77,7 +81,6 @@ async def book_doctor_appointment(
         booking_status=new_appointment.status
     )
 
-# --- THE LISTING ENDPOINT ---
 @router.get("/list")
 async def get_all_doctor_appointments(
     db: AsyncSession = Depends(get_db),
@@ -98,7 +101,7 @@ async def get_all_doctor_appointments(
             "name": p_name,
             "patient_name": p_name,
             "patientName": p_name,
-            "patient_id": str(appt.patient_id),
+            "patient_id": str(appt.patient_id), 
             "date": appt.appointment_date.strftime("%Y-%m-%d") if appt.appointment_date else "2026-07-12",
             "appointment_date": appt.appointment_date.strftime("%Y-%m-%d") if appt.appointment_date else "2026-07-12",
             "time": appt.appointment_date.strftime("%I:%M %p") if appt.appointment_date else "10:00 AM",

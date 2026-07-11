@@ -8,7 +8,7 @@ from app.db.session import Base
 # 🔑 1. ROLE DEFINITION ENUM
 class RoleEnum(str, enum.Enum):
     PATIENT = "patient"
-    DOCTOR = "DOCTOR"
+    DOCTOR = "doctor"
 
 
 # 👤 2. USER ACCOUNT MODEL
