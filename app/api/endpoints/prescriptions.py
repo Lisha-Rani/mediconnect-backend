@@ -2,6 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from typing import List
 
+from app.db.models import User
+from app.api.dependencies import get_current_user
+
 router = APIRouter(tags=["Pharmacy Script Infrastructure"])
 
 class PrescriptionCreate(BaseModel):
@@ -24,12 +27,23 @@ mock_prescription_database = [
     }
 ]
 
+# 🌟 FIX: Both routes were completely unauthenticated — any unauthenticated
+# request could read or write every patient's prescriptions. Added
+# get_current_user like every other protected route in the app.
 @router.get("/prescriptions", response_model=list)
-async def get_all_active_prescriptions():
+async def get_all_active_prescriptions(
+    current_user: User = Depends(get_current_user)
+):
     return mock_prescription_database
 
 @router.post("/prescriptions/create", status_code=status.HTTP_201_CREATED)
-async def create_new_prescription(payload: PrescriptionCreate):
+async def create_new_prescription(
+    payload: PrescriptionCreate,
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role.lower() != "doctor":
+        raise HTTPException(status_code=403, detail="Only providers can issue prescriptions.")
+
     new_script = {
         "id": len(mock_prescription_database) + 1,
         "medication_name": payload.medication_name,
@@ -38,7 +52,7 @@ async def create_new_prescription(payload: PrescriptionCreate):
         "patientName": payload.patient_name,
         "duration": payload.duration,
         "dosage": payload.dosage,
-        "prescriber": "Dr. Attending Staff Node"
+        "prescriber": f"Dr. {current_user.first_name or 'Attending'} {current_user.last_name or 'Staff'}".strip()
     }
     mock_prescription_database.append(new_script)
     return new_script

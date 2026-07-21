@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.db.session import get_db
-from app.db.models import User, Doctor
+from app.db.models import User, Doctor, Appointment
 from app.api.dependencies import get_current_user
 
 router = APIRouter(tags=["Doctor Profile Infrastructure"])
@@ -31,9 +31,15 @@ async def get_doctor_profile(
     except Exception:
         pass
 
-    # 🌟 FIX: Explicitly map the string dictionary fields to prevent "Dr. undefined" in frontend layouts
+    # 🌟 CRITICAL FIX: "id" must be the integer Doctor-table primary key
+    # (current_user.doctor_id), NOT the User's UUID (current_user.id).
+    # The frontend does Number(data.id) to get the doctor's bookable ID for
+    # POST /appointments/book, which requires doctor_id: int. Returning the
+    # UUID here made Number(uuid) => NaN, silently breaking every booking
+    # attempt made from the doctor's "Fix Appointment" button.
     return {
-        "id": current_user.id,
+        "id": current_user.doctor_id,
+        "user_id": current_user.id,
         "first_name": current_user.first_name or "Attending",
         "last_name": current_user.last_name or "Physician",
         "specialization": specialization,
@@ -42,3 +48,45 @@ async def get_doctor_profile(
         "email": current_user.email,
         "consultation_fee": consultation_fee
     }
+
+
+# 🌟 NEW: Was called by the frontend (masterPatientsTreated) but never existed
+# in the backend, so the "Patients" tab and the prescription-target dropdown
+# were always empty.
+@router.get("/doctor/patients")
+async def get_treated_patients(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    if current_user.role.lower() != "doctor":
+        raise HTTPException(status_code=403, detail="Access denied. Account is not assigned a provider role.")
+
+    if not current_user.doctor_id:
+        return []
+
+    result = await db.execute(
+        select(Appointment).where(Appointment.doctor_id == current_user.doctor_id)
+    )
+    appointments = result.scalars().all()
+
+    seen_patient_ids = set()
+    patients = []
+    for appt in appointments:
+        pid = str(appt.patient_id)
+        if pid in seen_patient_ids:
+            continue
+        seen_patient_ids.add(pid)
+
+        p_res = await db.execute(select(User).where(User.id == appt.patient_id))
+        patient = p_res.scalars().first()
+        name = f"{patient.first_name} {patient.last_name}" if patient else "Verified Case"
+
+        patients.append({
+            "id": pid,
+            "name": name,
+            "patient_name": name,
+            "last_visit": appt.appointment_date.strftime("%Y-%m-%d") if appt.appointment_date else None,
+            "primary_condition": "Clinical Case"
+        })
+
+    return patients

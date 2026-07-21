@@ -1,35 +1,23 @@
 import uuid
 from datetime import datetime, timedelta
-# 🌟 FIX: Added 'Request' to the end of this import statement!
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from jose import jwt, JWTError
-from passlib.context import CryptContext
 
 from app.db.session import get_db
 from app.db.models import User, Doctor, RoleEnum
+# 🌟 FIX: Use the shared security utilities (which read settings.SECRET_KEY
+# from your .env) instead of the local hardcoded copies that used to live in
+# this file. The old hardcoded SECRET_KEY here did not match settings.SECRET_KEY,
+# which is what ai_chat.py (and get_current_user, presumably) verify tokens
+# against — so every login-issued token silently failed auth anywhere else
+# in the app, including the WebSocket chat.
+from app.core.security import get_password_hash as hash_password, verify_password, create_access_token
+
 router = APIRouter(prefix="/auth", tags=["System Authentication"])
-
-# --- SECURITY UTILITY ENGINE ---
-PWD_CONTEXT = CryptContext(schemes=["bcrypt"], deprecated="auto")
-SECRET_KEY = "SUPER_SECRET_KEY_MEDIAI_CORE_NODE_CHANGE_THIS_IN_PROD"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 120
-
-def hash_password(password: str) -> str:
-    return PWD_CONTEXT.hash(password)
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return PWD_CONTEXT.verify(plain_password, hashed_password)
-
-def create_access_token(data: dict) -> str:
-    to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
 # --- PYDANTIC VALIDATION SCHEMAS ---
@@ -61,6 +49,11 @@ class TokenResponse(BaseModel):
 # =========================================================
 # 📝 ROUTE 1: THE REGISTRATION CONTROLLER
 # =========================================================
+# 🌟 FIX: This single endpoint handles BOTH patient and doctor registration
+# via the `role` field. The frontend previously posted to a separate
+# /auth/register/doctor URL that never existed on the backend AND never
+# sent `role` in the payload — see the accompanying register/page.tsx fix,
+# which now posts here with role included.
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register_new_user(payload: UserRegisterRequest, db: AsyncSession = Depends(get_db)):
     # 1. Check if email handle is already registered
@@ -100,7 +93,7 @@ async def register_new_user(payload: UserRegisterRequest, db: AsyncSession = Dep
         await db.flush()  # Populates new_doctor_profile.id instantly
         assigned_doctor_profile_id = new_doctor_profile.id
 
-    # 4. 🌟 FIX: Manually instantiate a clean native Python UUID object to satisfy column constraints
+    # 4. Manually instantiate a clean native Python UUID object to satisfy column constraints
     fresh_user_uuid = uuid.uuid4()
     encrypted_pass = hash_password(payload.password)
 
@@ -129,9 +122,6 @@ async def register_new_user(payload: UserRegisterRequest, db: AsyncSession = Dep
 # =========================================================
 # 🔑 ROUTE 2: THE UNIFIED LOGIN CONTROLLER
 # =========================================================
-# =========================================================
-# 🔑 UPGRADED UNIFIED LOGIN CONTROLLER (DUAL-MODE SAFE)
-# =========================================================
 @router.post("/login", response_model=TokenResponse)
 async def login_user(request: Request, db: AsyncSession = Depends(get_db)):
     # 1. Parse incoming payload safely regardless of frontend framework conventions
@@ -140,7 +130,7 @@ async def login_user(request: Request, db: AsyncSession = Depends(get_db)):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON request payload structure.")
 
-    # 🌟 FIX: Extract identifier whether frontend sends it as 'email' or 'username'
+    # Extract identifier whether frontend sends it as 'email' or 'username'
     input_email = body.get("email") or body.get("username")
     input_password = body.get("password")
 
@@ -152,21 +142,15 @@ async def login_user(request: Request, db: AsyncSession = Depends(get_db)):
     user_query = await db.execute(select(User).where(User.email == clean_email))
     user = user_query.scalars().first()
     
-    # Terminal debug helper to verify user presence instantly
-    print(f"\n➔ [MediAI Auth Debug] Attempting login verification for: '{clean_email}'")
     if not user:
-        print("   - ❌ Status 401: Target email string completely missing from database columns.")
         raise HTTPException(status_code=401, detail="Invalid credentials. Check email or password typing.")
 
     # 3. Validate password cryptography match against the User table baseline
     if not verify_password(input_password, user.hashed_password):
-        print("   - ❌ Status 401: Cryptographic password verification check failed.")
         raise HTTPException(status_code=401, detail="Invalid credentials. Check email or password typing.")
 
     if not user.is_active:
         raise HTTPException(status_code=400, detail="This account profile has been deactivated.")
-
-    print("   - ✅ Status 200: Credentials verified successfully! Granting JWT access token keys.")
 
     # 4. Standardize role strings and display formatting parameters
     user_display_name = f"{user.first_name or ''} {user.last_name or ''}".strip()

@@ -46,29 +46,24 @@ async def book_doctor_appointment(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date or time structure.")
 
-    # 🌟 FIX A: Parse the string token into a proper structural UUID instance
     try:
         target_patient_uuid = uuid.UUID(payload.patient_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Provided patient identifier is not a valid UUID string.")
 
     new_appointment = Appointment(
-        patient_id=target_patient_uuid, # Pass the true native UUID object
+        patient_id=target_patient_uuid,
         doctor_id=payload.doctor_id,
         appointment_date=parsed_appointment_date,
-        status="scheduled" # Matches default lowercase rule inside models.py
+        status="scheduled"
     )
     db.add(new_appointment)
     
-    # 🌟 FIX B: Target and clear out the active triage queue using the matching UUID type context
     triage_query = await db.execute(select(Diagnosis).where(Diagnosis.user_id == target_patient_uuid))
     active_triage_records = triage_query.scalars().all()
     for record in active_triage_records:
         await db.delete(record) 
 
-    #await db.commit()
-    #await db.refresh(new_appointment)
-    
     return AppointmentResponse(
         appointment_id=new_appointment.id,
         doctor_name=f"Dr. {doctor.first_name} {doctor.last_name}",
@@ -81,33 +76,92 @@ async def book_doctor_appointment(
         booking_status=new_appointment.status
     )
 
+
+# 🌟 REWRITTEN: This used to return EVERY appointment in the entire system
+# to whoever called it — any logged-in patient could see every other
+# patient's name and appointment details, and it never included doctor
+# identity at all, which is why the patient-side "Doctors" tab had nothing
+# real to show. It now scopes results to the caller and shapes the
+# response appropriately for each role.
 @router.get("/list")
-async def get_all_doctor_appointments(
+async def get_my_appointments(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    query = select(Appointment).order_by(Appointment.appointment_date.asc())
-    result = await db.execute(query)
-    appointments_list = result.scalars().all()
-    
-    formatted = []
-    for appt in appointments_list:
-        p_res = await db.execute(select(User).where(User.id == appt.patient_id))
-        patient = p_res.scalars().first()
-        p_name = f"{patient.first_name} {patient.last_name}" if patient else "Verified Case"
-        
-        formatted.append({
-            "id": appt.id,
-            "name": p_name,
-            "patient_name": p_name,
-            "patientName": p_name,
-            "patient_id": str(appt.patient_id), 
-            "date": appt.appointment_date.strftime("%Y-%m-%d") if appt.appointment_date else "2026-07-12",
-            "appointment_date": appt.appointment_date.strftime("%Y-%m-%d") if appt.appointment_date else "2026-07-12",
-            "time": appt.appointment_date.strftime("%I:%M %p") if appt.appointment_date else "10:00 AM",
-            "appointment_time": appt.appointment_date.strftime("%I:%M %p") if appt.appointment_date else "10:00 AM",
-            "type": "Clinical Consultation",
-            "specialty": "Clinical Consultation",
-            "status": appt.status.upper() 
-        })
-    return formatted
+    if current_user.role.lower() == "doctor":
+        if not current_user.doctor_id:
+            return []
+
+        query = select(Appointment).where(
+            Appointment.doctor_id == current_user.doctor_id
+        ).order_by(Appointment.appointment_date.asc())
+        result = await db.execute(query)
+        appointments_list = result.scalars().all()
+
+        formatted = []
+        for appt in appointments_list:
+            p_res = await db.execute(select(User).where(User.id == appt.patient_id))
+            patient = p_res.scalars().first()
+            p_name = f"{patient.first_name} {patient.last_name}" if patient else "Verified Case"
+
+            formatted.append({
+                "id": appt.id,
+                "name": p_name,
+                "patient_name": p_name,
+                "patientName": p_name,
+                "patient_id": str(appt.patient_id),
+                "date": appt.appointment_date.strftime("%Y-%m-%d") if appt.appointment_date else None,
+                "appointment_date": appt.appointment_date.strftime("%Y-%m-%d") if appt.appointment_date else None,
+                "time": appt.appointment_date.strftime("%I:%M %p") if appt.appointment_date else None,
+                "appointment_time": appt.appointment_date.strftime("%I:%M %p") if appt.appointment_date else None,
+                "type": "Clinical Consultation",
+                "specialty": "Clinical Consultation",
+                "status": appt.status.upper()
+            })
+        return formatted
+
+    else:
+        # Patient view: scoped to their own appointments, with doctor identity included
+        query = select(Appointment).where(
+            Appointment.patient_id == current_user.id
+        ).order_by(Appointment.appointment_date.asc())
+        result = await db.execute(query)
+        appointments_list = result.scalars().all()
+
+        formatted = []
+        for appt in appointments_list:
+            d_res = await db.execute(select(Doctor).where(Doctor.id == appt.doctor_id))
+            doctor = d_res.scalars().first()
+            d_name = f"Dr. {doctor.first_name} {doctor.last_name}" if doctor else "Attending Physician"
+            specialization = doctor.specialization if doctor else "General Medicine"
+
+            formatted.append({
+                "id": appt.id,
+                "doctor_id": appt.doctor_id,
+                "doctor_name": d_name,
+                "specialization": specialization,
+                "specialty": specialization,
+                "date": appt.appointment_date.strftime("%Y-%m-%d") if appt.appointment_date else None,
+                "appointment_date": appt.appointment_date.strftime("%Y-%m-%d") if appt.appointment_date else None,
+                "time": appt.appointment_date.strftime("%I:%M %p") if appt.appointment_date else None,
+                "appointment_time": appt.appointment_date.strftime("%I:%M %p") if appt.appointment_date else None,
+                "status": appt.status.upper()
+            })
+        return formatted
+
+
+@router.post("/complete/{appointment_id}")
+async def complete_appointment_quick(
+    appointment_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    result = await db.execute(select(Appointment).where(Appointment.id == appointment_id))
+    appointment = result.scalars().first()
+    if not appointment:
+        raise HTTPException(status_code=404, detail="Appointment not found.")
+
+    appointment.status = "consulted"
+    await db.commit()
+
+    return {"message": "Appointment marked as consulted.", "id": appointment_id, "status": appointment.status}
