@@ -50,9 +50,14 @@ async def get_doctor_profile(
     }
 
 
-# 🌟 NEW: Was called by the frontend (masterPatientsTreated) but never existed
-# in the backend, so the "Patients" tab and the prescription-target dropdown
-# were always empty.
+# 🌟 FIXED: Was returning every appointment (scheduled AND consulted) for
+# this doctor, including — if the doctor's own account was ever used to book
+# or run a symptom check while their own JWT was active (e.g. via the
+# Patient/Provider preview toggle on the frontend, which only changes what
+# the UI *shows* and does not switch accounts) — the doctor's own account
+# appearing as a "patient". Now: only genuinely completed ("consulted")
+# visits count as "treated patients", and the doctor's own user id is
+# explicitly excluded as a defensive guard regardless of how bad data got in.
 @router.get("/doctor/patients")
 async def get_treated_patients(
     current_user: User = Depends(get_current_user),
@@ -65,7 +70,11 @@ async def get_treated_patients(
         return []
 
     result = await db.execute(
-        select(Appointment).where(Appointment.doctor_id == current_user.doctor_id)
+        select(Appointment).where(
+            Appointment.doctor_id == current_user.doctor_id,
+            Appointment.status == "consulted",
+            Appointment.patient_id != current_user.id
+        )
     )
     appointments = result.scalars().all()
 
