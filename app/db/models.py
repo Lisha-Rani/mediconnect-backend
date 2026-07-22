@@ -105,3 +105,24 @@ class ChatMessage(Base):
     sender = Column(String, nullable=False)
     message = Column(Text, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+# 💊 9. NEW: PRESCRIPTION MODEL (with optional file attachment)
+# Previously prescriptions lived only in an in-memory Python list inside
+# prescriptions.py — nothing was persisted to the database, there was no real
+# link to a patient's account (matching was done by comparing display-name
+# strings), and an uploaded file was never actually stored anywhere at all.
+# This gives prescriptions a real table, a real patient/doctor relationship,
+# and a place to record an attached file's path for later download.
+class Prescription(Base):
+    __tablename__ = "prescriptions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    patient_id = Column(UUID, ForeignKey("users.id"), nullable=False)
+    doctor_id = Column(Integer, ForeignKey("doctors.id"), nullable=False)
+    medication_name = Column(String, nullable=False)
+    dosage = Column(String, nullable=False)
+    duration = Column(String, nullable=False)
+    file_path = Column(String, nullable=True)
+    file_original_name = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
