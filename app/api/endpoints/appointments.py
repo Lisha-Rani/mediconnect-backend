@@ -92,8 +92,13 @@ async def get_my_appointments(
         if not current_user.doctor_id:
             return []
 
+        # 🌟 FIX: Same guard as /doctor/patients — appointments where the
+        # doctor's own account ended up as the patient (e.g. from using the
+        # frontend's Patient/Provider preview toggle while still authenticated
+        # as the doctor) were cluttering this list too. Excluded here as well.
         query = select(Appointment).where(
-            Appointment.doctor_id == current_user.doctor_id
+            Appointment.doctor_id == current_user.doctor_id,
+            Appointment.patient_id != current_user.id
         ).order_by(Appointment.appointment_date.asc())
         result = await db.execute(query)
         appointments_list = result.scalars().all()
