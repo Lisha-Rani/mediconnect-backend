@@ -21,7 +21,11 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
-        "http://127.0.0.1:3000"
+        "http://127.0.0.1:3000",
+        # 🌟 FIX: added the live deployed frontend — without this, every
+        # request from the deployed site would be blocked by the browser
+        # with a CORS error, since only local dev origins were allowed before.
+        "https://mediconnect-frontendss.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
